@@ -185,3 +185,31 @@ static int kit_page_visible(const track_t *t, uint32_t first)
     const kit_if_t *k = track_kit(t);
     return k && first < k->nparams(kit_lane_sel(t));
 }
+
+/* A kit's parameters in projects and user presets: in the 128 bytes a track's FM6 patch takes (project.c
+ * proj_t.fm6, up_fm6.c), which a kit track does not use. Every drum's values in order, as many as the drum has
+ * (0..127, the stores' 7-bit bytes), the rest 0. The 909 needs 81 */
+#define KIT_PACKED 128u
+static void kit_pack(const track_t *t, uint8_t *out)
+{
+    const kit_if_t *k = track_kit(t);
+    uint32_t ti = (uint32_t)(t - trk) % NTRK, l, i, n = 0;
+    memset(out, 0, KIT_PACKED);
+    if (!k)
+        return;
+    for (l = 0; l < k->nlanes; l++)
+        for (i = 0; i < k->nparams(l) && n < KIT_PACKED; i++)
+            out[n++] = (uint8_t)clamp(kit_pot[ti][l][i], 0, 127);
+}
+static void kit_unpack(track_t *t, const uint8_t *in)
+{
+    const kit_if_t *k = track_kit(t);
+    uint32_t ti = (uint32_t)(t - trk) % NTRK, l, i, n = 0;
+    if (!k)
+        return;
+    kit_defaults(t);
+    for (l = 0; l < k->nlanes; l++)
+        for (i = 0; i < k->nparams(l) && n < KIT_PACKED; i++)
+            kit_pot[ti][l][i] = (int16_t)clamp(in[n++] & 0x7F, 0, k->param(l, i)->max);
+}
+_Static_assert(KIT_PACKED == FM6_PACKED, "a kit's parameters take the FM6 patch's place");

@@ -38,10 +38,11 @@ static int k909_same(const char *a, const char *b)
 /* a drum's parameters as the DRUM pages show them: the 909's own, without Pan (the 909's index of each) */
 static uint8_t k909_map[DR_NUM][KIT_PARAMS], k909_n[DR_NUM];
 static kit_param_t k909_desc[DR_NUM][KIT_PARAMS];
+static volatile uint8_t k909_made;   /* set last: the UI and the audio code may both be first; they write the same */
 static void k909_tables(void)
 {
     uint32_t v, i, j;
-    if (k909_n[0])
+    if (k909_made)
         return;
     for (v = 0; v < DR_NUM; v++) {
         uint32_t n = 0;
@@ -62,6 +63,7 @@ static void k909_tables(void)
         }
         k909_n[v] = (uint8_t)n;
     }
+    k909_made = 1;
 }
 
 static uint32_t k909_nparams(uint32_t lane)

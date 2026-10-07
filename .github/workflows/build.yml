@@ -55,6 +55,9 @@ jobs:
           echo "::notice title=Firmware size::app $(stat -c %s build/felucca.bin) of $((0x8DFBC)) bytes, package $(stat -c %s build/felucca.fwsc) bytes"
           ./build.sh 2>&1 | grep -iE "ram|bss|pool|free|bytes|warning" | head -20 | while read -r l; do echo "::notice title=Build::$l"; done || true
 
+      - name: Host tests
+        run: sh tests/run_tests.sh > build/tests.log 2>&1 || { grep -E "FAIL" build/tests.log | head -20 | while read -r l; do echo "::error title=Test::$l"; done; exit 1; }
+
       - name: Size report
         run: |
           "$JIELI_TOOLCHAIN/common/bin/objdump" -t build/felucca.elf > build/syms.txt

@@ -3340,11 +3340,11 @@ static int test_quick_layers(void)
     key_down(white(1)); key_up(white(1)); frame();
     ok &= TSEL->eng_req == ENGI_FM6;                    /* (G3: FM6, second in ENGINE_ORDER) */
     key_down(white(NENG_SHOWN - 1u)); key_up(white(NENG_SHOWN - 1u)); frame();
-    ok &= TSEL->eng_req == ENGI_DRUM;                   /* (the last key: DRUM) */
+    ok &= TSEL->eng_req == ENGI_909;                    /* (the last key: the 909) */
     ok &= !memcmp(TSEL->step, before.step, sizeof before.step) && TSEL->p[P_SLEN] == before.p[P_SLEN] &&
           TSEL->p[P_SLCR] == SL_STUT;
     btn_up(B_EDIT); frame();
-    bad += check("EDIT + white key n: the n-th engine shown (FM6 2nd, DRUM last), while playing; steps, LEN, SLICER stay", ok);
+    bad += check("EDIT + white key n: the n-th engine shown (FM6 2nd, 909 last), while playing; steps, LEN, SLICER stay", ok);
     hold(B_SAVE);
     bad += check("  SAVE held: UNDO back to before the layer's loads, the steps untouched",
                  TSEL->eng_req == 0u && TSEL->preset == before.preset && !memcmp(TSEL->step, before.step, sizeof before.step));
@@ -4085,10 +4085,10 @@ static int test_fm4_retired(void)
     }
     bad += check("PRESETS KNOB 2: the engines in order, DIGITAL skipped, back to the first",
                  seen == all && TSEL->eng_req == 0u && eng_step(0, 1) == ENGI_FM6 && eng_step(ENGI_FM6, 1) == 2u &&
-                 eng_step(ENGI_FM6, -1) == 0u && eng_step(0, -1) == ENGI_DRUM);
+                 eng_step(ENGI_FM6, -1) == 0u && eng_step(0, -1) == ENGI_909);
     {   /* the display order (engines.c ENGINE_ORDER): every engine one can pick once; the PRESETS list follows it */
         static const char *const ORDER[] = {"ANALOG", "FM6", "PHASE", "LOFI", "SAMPLE", "VOICE", "TRIO", "WHEEL", "GRAIN",
-                                            "PHYS", "NOISE", "SLICE", "DRUM"};
+                                            "PHYS", "NOISE", "SLICE", "DRUM", "909"};
         uint32_t last = 0xFFu, r = 0, n = 0;
         ok = NENG_SHOWN == NELEM(ORDER);
         for (i = 0; ok && i < NENG_SHOWN; i++)
@@ -4103,7 +4103,7 @@ static int test_fm4_retired(void)
             last = e;
             r++;
         }
-        bad += check("engines shown ANALOG FM6 PHASE ... NOISE SLICE DRUM (ENGINE_ORDER); PRESETS lists them so",
+        bad += check("engines shown ANALOG FM6 PHASE ... NOISE SLICE DRUM 909 (ENGINE_ORDER); PRESETS lists them so",
                      ok && r == NENG_SHOWN);
     }
     /* a user preset stored with engine 1: kept as it is, it loads as FM6 with the converted patch */
@@ -5936,6 +5936,88 @@ static int test_head_centres(void)
     return bad;
 }
 
+/* the 909 (eng_909.c, kit.c): EDIT opens the DRUM pages on the drum last played, a knob edits that drum alone,
+ * the audio code takes the change, the kit sounds without voices, and leaving it zeroes PHYS's memory */
+static uint64_t kit_energy(track_t *t, uint32_t note, uint32_t blocks)
+{
+    int32_t o[2u * CTL];
+    uint64_t e = 0;
+    uint32_t b, i;
+    if (note)
+        trk_note_on(t, note, 100);
+    for (b = 0; b < blocks; b++) {
+        memset(o, 0, sizeof o);
+        mix_block(o, CTL);
+        for (i = 0; i < 2u * CTL; i++)
+            e += (uint64_t)(o[i] < 0 ? -o[i] : o[i]);
+    }
+    return e;
+}
+static int test_kit909(void)
+{
+    int bad = 0, ok;
+    char ti[20];
+    uint32_t b, k, voices = 0, part;
+    int32_t o[2u * CTL];
+    uint64_t e0, e1;
+    ui_power_on();
+    song.master_q12 = 4096;
+    set_engine_of(TSEL, ENGI_909); go_home(); frame();
+    part = song.sel;
+    for (b = 0; b < 64u && TSEL->engine != ENGI_909; b++)
+        mix_block(o, CTL);
+    press(B_EDIT);
+    page_title(ti);
+    ok = cur_page()->scope == SC_KIT && str_eq(ti, "KICK 1/2") && kit_pot[part][DR_BD][0] == 34;
+    bad += check("909: EDIT opens the DRUM pages on the kick (KICK 1/2), every drum at its defaults", ok);
+    k = 38u - 29u - 12u * (uint32_t)song.octave;          /* the key of the snare (eng_909.c k909_keys) */
+    key_down(k); frame(); key_up(k); frame();
+    page_title(ti);
+    ok = kit_sel[part] == DR_SD && str_eq(ti, "SNARE 1/2");
+    bad += check("909: a drum played on the keys is the one the DRUM pages edit (SNARE 1/2)", ok);
+    turn(EN_K1, 5);
+    ok = kit_pot[part][DR_SD][0] == 69 && kit_pot[part][DR_BD][0] == 34 && kit_pot[part][DR_LT][0] == 66;
+    mix_block(o, CTL);
+    ok &= drum909_get(k909(part), DR_SD, 0) == 69;
+    bad += check("909: KNOB 1 tunes the snare alone; the audio code takes it at its next block", ok);
+    e0 = kit_energy(TSEL, 36, 64);
+    for (k = 0; k < NVOICE; k++)
+        voices += TSEL->v[k].active;
+    bad += check("909: a kick sounds, with no voice taken from the budget", e0 > 1000000u && !voices);
+    kit_pot[part][DR_BD][3] = 0;                          /* the kick's LEVEL to 0: silent */
+    e1 = kit_energy(TSEL, 0, 3000);                       /* (what still rings, the reverb: let it die) */
+    e1 = kit_energy(TSEL, 36, 64);
+    bad += check("909: the kick's LEVEL at 0 silences the kick", e1 * 100u < e0);
+    song.playing = 0;                                     /* a project and a user preset keep every drum's values */
+    kit_pot[part][DR_SD][0] = 99; kit_pot[part][DR_CR][2] = 7;
+    project_save(2);
+    kit_pot[part][DR_SD][0] = 1; kit_pot[part][DR_CR][2] = 1;
+    project_load(2); frame();
+    ok = TSEL->eng_req == ENGI_909 && kit_pot[part][DR_SD][0] == 99 && kit_pot[part][DR_CR][2] == 7 &&
+         kit_pot[part][DR_BD][3] == 0;
+    bad += check("909: a project keeps every drum's values", ok);
+    kit_pot[part][DR_SD][0] = 55;
+    up_store(5, "MY 909");
+    kit_pot[part][DR_SD][0] = 2;
+    up_load(5); frame();
+    ok = TSEL->eng_req == ENGI_909 && kit_pot[part][DR_SD][0] == 55 && kit_pot[part][DR_CR][2] == 7;
+    bad += check("909: a user preset keeps every drum's values", ok);
+    set_engine_of(TSEL, ENGI_PHYS); frame();
+    for (b = 0; b < 64u && TSEL->engine != ENGI_PHYS; b++)
+        mix_block(o, CTL);
+    {
+        const uint8_t *m = (const uint8_t *)phys_slot[part];
+        uint32_t i, nz = 0;
+        for (i = 0; i < sizeof phys_slot[0]; i++)
+            nz |= m[i];
+        ok = !nz && !kit_live[part];
+    }
+    bad += check("909 -> PHYS: the part's memory is zeroed for PHYS (as at power-on)", ok);
+    e1 = kit_energy(TSEL, 60, 64);
+    bad += check("909 -> PHYS: PHYS plays", e1 > 100000u);
+    return bad;
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -5996,6 +6078,7 @@ int main(void)
     bad += test_breath();
     bad += test_step_leds();
     bad += test_fm6_charts();
+    bad += test_kit909();
 #if FELUCCA_FM4
     bad += test_fm_charts();                        /* (DIGITAL's charts: built with FELUCCA_FM4=1 only) */
 #else

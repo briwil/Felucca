@@ -723,7 +723,10 @@ static void project_capture(project_t *p)
         p->t[i].engine = trk[i].eng_req;
         p->t[i].preset = trk[i].preset;
         memcpy(p->t[i].step, trk[i].step, sizeof trk[i].step);
-        fm6_pack(fm6_patch[i], p->fm6[i]);
+        if (track_kit(&trk[i]))                         /* a kit: its drums' values in the patch's place (kit.c) */
+            kit_pack(&trk[i], p->fm6[i]);
+        else
+            fm6_pack(fm6_patch[i], p->fm6[i]);
     }
     p->motion = motion;
     motion_unguard(f);
@@ -850,7 +853,9 @@ static int project_restore_runtime(const project_t *input)
         t->preset = (uint8_t)(ENGINES[e]->npresets ? (s->preset >= PROJ_DEF_KEEP ? 0u : s->preset) % ENGINES[e]->npresets : 0u);
         memcpy(t->step, s->step, sizeof t->step);
         proj_steps(t->step);
-        {   /* the project's own FM6 patch, never reloaded from SLOT: F n if it is that factory patch, else OWN */
+        if (ENGINES[e]->kit)                            /* a kit: its drums' values (kit.c) */
+            kit_unpack(t, p->fm6[k]);
+        else {   /* the project's own FM6 patch, never reloaded from SLOT: F n if it is that factory patch, else OWN */
             uint8_t v[FP_SIZE + 1u];
             fm6_unpack(p->fm6[k], v);
             fm6_set_patch(k, v);
