@@ -55,6 +55,26 @@ jobs:
           echo "::notice title=Firmware size::app $(stat -c %s build/felucca.bin) of $((0x8DFBC)) bytes, package $(stat -c %s build/felucca.fwsc) bytes"
           ./build.sh 2>&1 | grep -iE "ram|bss|pool|free|bytes|warning" | head -20 | while read -r l; do echo "::notice title=Build::$l"; done || true
 
+      - name: Size report
+        run: |
+          "$JIELI_TOOLCHAIN/common/bin/objdump" -t build/felucca.elf > build/syms.txt
+          python3 - <<'PY'
+          import re
+          rows = []
+          for l in open("build/syms.txt"):
+              m = re.match(r"^([0-9a-f]+)\s.*\s(\.\S+)\s+([0-9a-f]+)\s+(\S+)$", l.strip())
+              if m and int(m[3], 16) > 0:
+                  rows.append((int(m[3], 16), m[2], m[4]))
+          rows.sort(reverse=True)
+          by = {}
+          for sz, sec, _ in rows:
+              by[sec] = by.get(sec, 0) + sz
+          print("::notice title=Sections::" + ", ".join(f"{k} {v}" for k, v in sorted(by.items(), key=lambda x: -x[1])))
+          top = [f"{sz} {sec} {nm}" for sz, sec, nm in rows[:60]]
+          for i in range(0, 60, 15):
+              print("::notice title=Largest symbols " + str(i) + "::" + "%0A".join(top[i:i + 15]))
+          PY
+
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
