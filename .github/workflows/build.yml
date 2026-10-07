@@ -1,0 +1,62 @@
+# Builds the firmware package on every push, so no computer needs the JieLi toolchain.
+# The result (felucca.fwsc) is attached to each run under "Artifacts".
+name: Build firmware
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      JIELI_TOOLCHAIN: ${{ github.workspace }}/../jieli/toolchain
+      AC79_SDK: ${{ github.workspace }}/../ac79-sdk
+      SDK_TAG: AC79NN_SDK_V1.2.1_2023-12-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python packages
+        run: pip install Pillow fonttools
+
+      - name: Cache JieLi toolchain
+        id: tc-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/../jieli
+          key: jieli-toolchain-v1
+
+      - name: Get JieLi toolchain
+        if: steps.tc-cache.outputs.cache-hit != 'true'
+        run: tools/get_toolchain.sh "$GITHUB_WORKSPACE/../jieli"
+
+      - name: Cache AC79 SDK files
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/../ac79-sdk
+          key: ac79-sdk-${{ env.SDK_TAG }}
+
+      - name: Get AC79 SDK files (only the three the package needs)
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse --branch "$SDK_TAG" \
+              https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git "$AC79_SDK"
+          git -C "$AC79_SDK" sparse-checkout set cpu/wl82/tools
+          ls -l "$AC79_SDK/cpu/wl82/tools/uboot.boot"
+
+      - name: Build
+        run: ./build.sh
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: felucca-${{ github.sha }}
+          path: |
+            build/felucca.fwsc
+            build/felucca.bin
+          if-no-files-found: error
