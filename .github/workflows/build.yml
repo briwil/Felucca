@@ -50,7 +50,10 @@ jobs:
           ls -l "$AC79_SDK/cpu/wl82/tools/uboot.boot"
 
       - name: Build
-        run: ./build.sh
+        run: |
+          ./build.sh
+          ls -l build/felucca.bin build/felucca.fwsc
+          echo "app slot limit: $((0x8DFBC)) bytes"
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
