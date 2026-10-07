@@ -353,6 +353,10 @@ static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
         return;
     }
     mod_note(t, note, vel);                             /* the matrix's VEL / KEY / RAND */
+    if (ENGINES[t->engine]->kit) {                      /* a kit engine: its drum, no voice (kit.c) */
+        kit_note(t, note, vel);
+        return;
+    }
     for (i = 0; i < NVOICE; i++)
         any |= t->v[i].gate;
     if (!any) {                                        /* fresh phrase: LFO retrigger and fade */
@@ -457,6 +461,7 @@ static void engine_block(track_t *t)
             v->env = v->env_out = 0;
         }
         t->engine = eng_idx(t->eng_req);
+        kit_switched(t);                                /* kit.c: a kit's memory zeroed once it is left */
         t->xf_on = 0;
         t->nmono = 0;
         t->mono_note = 0;

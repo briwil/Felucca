@@ -856,6 +856,18 @@ static void page_title(char *ti)
             if (i == ui.page)
                 k = n;
         }
+    if (pg->scope == SC_KIT) {                          /* DRUM: the drum's name and its page ("SNARE 2/3") */
+        const kit_if_t *kk = track_kit(t);
+        uint32_t np = kk ? (kk->nparams(kit_lane_sel(t)) + 3u) / 4u : 1u;
+        str_cpy(ti, kk ? kk->lanes[kit_lane_sel(t)].full : "DRUM", 12);
+        if (np > 1u) {
+            str_cpy(ti + str_len(ti), " ", 4);
+            fmt_int(ti + str_len(ti), (int32_t)(pg->id[0] / 4u + 1u));
+            str_cpy(ti + str_len(ti), "/", 4);
+            fmt_int(ti + str_len(ti), (int32_t)np);
+        }
+        return;
+    }
     str_cpy(ti, pt ? pt : grid_on() ? "GRID" : pg->title, 12);
     if (n > 1) {
         str_cpy(ti + str_len(ti), " ", 4);

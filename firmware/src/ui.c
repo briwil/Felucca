@@ -189,6 +189,11 @@ static uint32_t layer_btn(void);
  * a SLICE track's (ui_slice.c) */
 static int page_visible(uint32_t i)
 {
+    if (PAGES[i].scope == SC_KIT)                      /* DRUM: a kit engine's drums (kit.c) */
+        return kit_page_visible(TSEL, PAGES[i].id[0]);
+    if (track_kit(TSEL) && PAGES[i].fam == FAM_EDIT &&  /* a kit: no EDIT 2 (unused), no VOICE (no voices) */
+        (PAGES[i].id[0] == P_E4 || PAGES[i].id[0] == P_VOICE))
+        return 0;
 #if FELUCCA_SLICE
     if (PAGES[i].graph == GR_SLICES)
         return ENGINES[TSEL->eng_req % NENGINES] == &ENG_SLICE;
@@ -203,6 +208,9 @@ static int page_visible(uint32_t i)
 static uint32_t page_first(uint32_t fam)
 {
     uint32_t i;
+    for (i = 0; i < NPAGES; i++)
+        if (PAGES[i].fam == fam && page_visible(i))   /* (the DRUM pages come first, a kit engine's only) */
+            return i;
     for (i = 0; i < NPAGES; i++)
         if (PAGES[i].fam == fam)
             return i;
@@ -825,6 +833,7 @@ static void apply_preset_to(track_t *t, uint32_t pi)
             t->p[P_DIST + i] = (int16_t)(pr->fx[i] ? pr->fx[i] - 1 : FX_DEF[i]);
     }
     fm6_track_loaded(t);                              /* FM6: the preset's patch (its SLOT) */
+    kit_defaults(t);                                  /* a kit: every drum to its defaults (kit.c) */
     load_end(t);
 }
 

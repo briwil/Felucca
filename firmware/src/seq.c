@@ -44,7 +44,11 @@ static uint32_t trk_index(const track_t *t) { return (uint32_t)(t - trk); }
 
 static uint32_t trk_midi_ch(uint32_t i) { return i % NTRK; }   /* MIDI channel 0..15 of track i (keys -> MIDI out) */
 
-static int drum_track(const track_t *t) { return ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM; }
+static int drum_track(const track_t *t)
+{
+    const engine_t *e = ENGINES[eng_idx(t->eng_req)];
+    return e == &ENG_DRUM || e->kit;                    /* DRUM, or a kit engine (kit.c): the grid */
+}
 
 /* the 27 keys from F: black or white, and the key's place among the keys of its colour (white 0..15, black
  * 0..10). The DRUM grid: white keys are steps, black keys 1..8 lanes, 9 ACC, 10 / 11 the page */
@@ -367,6 +371,7 @@ static void rec_release(track_t *t, uint32_t note)
 static void input_on(track_t *t, uint32_t note, uint32_t vel)
 {
     last_note = (uint8_t)note;
+    kit_played(t, note);                               /* a kit: the drum the DRUM pages edit */
     if (rec_on(t) && !t->p[P_AMODE])               /* (ARP on: arp_tick records its notes) */
         rec_note(t, note, vel);
     if (t->p[P_AMODE])

@@ -340,8 +340,9 @@ static void mix_part(track_t *t, uint32_t n)
 {
     int32_t *b = part_buf;
     uint32_t i;
+    const int kit = ENGINES[t->engine]->kit != 0;
     mod_begin(t);                                       /* the matrix's per-block values into t->p (mod.c) */
-    if (track_render(t, b, n))
+    if (kit ? kit_render(t, b, n) : track_render(t, b, n))
         t->tail = 16;                                   /* blocks of DIST state to run out after the last voice */
     else if ((!t->tail || !t->p[P_DIST] || !--t->tail) && !slicer_busy(t)) {
         slicer_track(t, 0, n);                          /* (the SLICER's step clock runs on) */
@@ -370,6 +371,10 @@ static void mix_part(track_t *t, uint32_t n)
                 send_d[i] += mulq15(xs, d);
             if (r)
                 send_r[i] += mulq15(xs, r);
+            if (kit) {                                  /* a kit's own sends, per drum (kit.c), at the LEVEL */
+                send_r[i] += clamp(((kit_rev[i] >> 2) * lvl) >> 10, -(1 << 24), 1 << 24);
+                send_d[i] += clamp(((kit_dly[i] >> 2) * lvl) >> 10, -(1 << 24), 1 << 24);
+            }
             mix_l[i] += (x * gl) >> 12;
             mix_r[i] += (x * gr) >> 12;
         }

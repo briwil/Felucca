@@ -569,7 +569,8 @@ static void edit_param(uint32_t slot, int32_t steps)
         return;
     v = param_turn(d, *vp, accel(EN_K1 + slot, steps, d->fmt == F_ENUM ? 0 : d->max - d->min));
     *vp = (int16_t)v;
-    if (pg->scope != SC_GLOBAL) motion_capture(TSEL, (uint32_t)(vp - TSEL->p), *vp);
+    if (pg->scope != SC_GLOBAL && pg->scope != SC_KIT)   /* (a drum's parameter is not in p[]: no automation yet) */
+        motion_capture(TSEL, (uint32_t)(vp - TSEL->p), *vp);
 }
 
 /* OCT+ on an action page: the picked action. A load stays picked (browse and load again); the others

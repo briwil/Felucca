@@ -70,6 +70,10 @@ jobs:
           for sz, sec, _ in rows:
               by[sec] = by.get(sec, 0) + sz
           print("::notice title=Sections::" + ", ".join(f"{k} {v}" for k, v in sorted(by.items(), key=lambda x: -x[1])))
+          soft = sorted({nm for _, _, nm in rows if re.match(r"__(add|sub|mul|div|neg|cmp|eq|ne|lt|le|gt|ge|un|extend|trunc|fix|float)\w*[sd]f", nm)})
+          if soft:
+              print("::error title=Soft float::the float code calls software float helpers: " + " ".join(soft))
+              raise SystemExit(1)
           top = [f"{sz} {sec} {nm}" for sz, sec, nm in rows[:60]]
           for i in range(0, 60, 15):
               print("::notice title=Largest symbols " + str(i) + "::" + "%0A".join(top[i:i + 15]))

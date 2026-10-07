@@ -108,10 +108,14 @@ static uint32_t drum_swaps(const track_t *t)
 }
 
 /* the lane's name as the track's KIT plays it (5 characters at most) */
+static const kit_lane_t *kit_grid_lane(const track_t *t, uint32_t l);   /* kit.c */
 static const char *drum_lane_name(const track_t *t, uint32_t l)
 {
     static const char *const N[NLANE] = {"KICK", "SNARE", "CLAP", "HATCL", "HATOP", "TOM", "RIM", "BELL"};
+    const kit_lane_t *kl = kit_grid_lane(t, l);
     uint32_t kit = drum_swaps(t);
+    if (kl)
+        return kl->full;
     l &= NLANE - 1u;
     if (l == DV_TOM && (kit & 1u))
         return "CONGA";
@@ -123,7 +127,10 @@ static const char *drum_lane_name(const track_t *t, uint32_t l)
 static const char *drum_lane_abbr(const track_t *t, uint32_t l)
 {
     static const char *const N[NLANE] = {"BD", "SD", "CP", "CH", "OH", "TM", "RS", "CB"};
+    const kit_lane_t *kl = kit_grid_lane(t, l);
     uint32_t kit = drum_swaps(t);
+    if (kl)
+        return kl->name;
     l &= NLANE - 1u;
     if (l == DV_TOM && (kit & 1u))
         return "CG";

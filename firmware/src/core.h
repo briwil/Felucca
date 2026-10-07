@@ -20,9 +20,11 @@
 #define FELUCCA_FM4 0            /* the DIGITAL engine (eng_digital.c, four-operator FM): kept in the tree, not built
                                   * by default; replaced by FM6, its sounds convert (fm4_convert.c) */
 #endif
-#define NENGINES (13 + FELUCCA_SLICE)   /* SLICE (13) comes last: the other engines keep their numbers */
+#define NENGINES 15                /* SLICE is 13 (reserved without FELUCCA_SLICE), the 909 kit 14 (ENGI_909) */
+#define ENGI_SLICE 13u
+#define ENGI_909 14u
 #define ENGI_DIGITAL 1u          /* reserved without FELUCCA_FM4: never selectable (eng_ok), its sounds load as FM6 */
-#define NENG_SHOWN (NENGINES - !FELUCCA_FM4)   /* the engines one can pick: PRESETS, the EDIT layer, the editor,
+#define NENG_SHOWN (NENGINES - !FELUCCA_FM4 - !FELUCCA_SLICE)   /* the engines one can pick: PRESETS, the EDIT layer, the editor,
                                                 * in the display order of engines.c ENGINE_ORDER */
 #define UP_SLOTS 32u             /* user presets (upreset.c) */
 #define NELEM(a) (sizeof(a) / sizeof((a)[0]))
@@ -178,6 +180,37 @@ typedef struct {
 #define PAT(n) .pat = (n)
 
 struct track;
+/* A kit engine (eng_909.c): one instrument of several drums, each with its own parameters, rendered for the
+ * whole part at once instead of per voice. It takes no voices from the shared budget (voice.c trk_note_on
+ * hands its notes to trigger); fx.c mix_part renders it (dry plus its own per-drum reverb and delay sends).
+ * Each drum's parameters ("pots", 0..max as on the X0X / Schwung modules) are the track's kit_pot[][] (kit.c),
+ * edited on the DRUM pages (params.c SC_KIT) */
+#define KIT_LANES 16u            /* drums a kit may have */
+#define KIT_PARAMS 12u           /* parameters a drum may have */
+typedef struct {
+    const char *name;            /* the drum's label in the knob strip ("BD"): 2..5 characters */
+    const char *full;            /* .. and as a title ("KICK") */
+} kit_lane_t;
+typedef struct {
+    const char *label;           /* knob label, upper case, <= 5 characters */
+    uint8_t max, def;            /* 0..max; max 127 = continuous, else an n-way switch */
+    const char *const *names;    /* switch: max + 1 names, else 0 */
+} kit_param_t;
+typedef struct kit_if {
+    uint8_t nlanes;
+    const kit_lane_t *lanes;
+    uint32_t (*nparams)(uint32_t lane);
+    const kit_param_t *(*param)(uint32_t lane, uint32_t i);
+    int32_t (*lane_of)(uint32_t note);          /* the drum a MIDI / GM note plays, -1 = none */
+    void (*init)(uint32_t part);                 /* the part's state from scratch (its memory is zeroed first) */
+    void (*set)(uint32_t part, uint32_t lane, uint32_t i, int32_t v);   /* a pot (audio context only) */
+    int32_t (*get)(uint32_t part, uint32_t lane, uint32_t i);
+    void (*trigger)(uint32_t part, uint32_t lane, uint32_t vel);       /* vel 1..127 (audio context only) */
+    /* one block: dry, its reverb and delay sends, floats at full scale 1.0 (the buffers are cleared first);
+     * returns 1 while anything sounds */
+    int (*render)(uint32_t part, float *dry, float *rev, float *dly, uint32_t n);
+} kit_if_t;
+
 typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c files) */
     const char *name;            /* "ANALOG" (PRESETS, the editor) */
     const char *page_title[2];   /* EDIT 1 and EDIT 2 */
@@ -208,6 +241,7 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
      * done() says so (once per control tick, before the render), not at the end of the ADSR's release */
     uint8_t ownenv;
     int (*done)(struct track *t, voice_t *v);
+    const kit_if_t *kit;         /* a kit engine (see kit_if_t above), 0 = a voice engine */
 } engine_t;
 
 /* ------------------------------------------------- tracks, the song --- */
