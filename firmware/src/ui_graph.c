@@ -838,16 +838,9 @@ static void page_title(char *ti)
             if (i == ui.page)
                 k = n;
         }
-    if (pg->scope == SC_KIT) {                          /* DRUM: the drum's name and its page ("SNARE 2/3") */
+    if (pg->scope == SC_KIT) {                          /* DRUM: the drum's name (CESARI: its rows are on the map) */
         const kit_if_t *kk = track_kit(t);
-        uint32_t np = kk ? (kk->nparams(kit_lane_sel(t)) + 3u) / 4u : 1u;
         str_cpy(ti, kk ? kk->lanes[kit_lane_sel(t)].full : "DRUM", 12);
-        if (np > 1u) {
-            str_cpy(ti + str_len(ti), " ", 4);
-            fmt_int(ti + str_len(ti), (int32_t)(pg->id[0] / 4u + 1u));
-            str_cpy(ti + str_len(ti), "/", 4);
-            fmt_int(ti + str_len(ti), (int32_t)np);
-        }
         return;
     }
     str_cpy(ti, pt ? pt : grid_on() ? "GRID" : pg->title, 12);
@@ -908,6 +901,12 @@ static uint32_t graph_signature(void)
     }
     if (pg->graph == GR_MOD)
         h ^= (mod_ui_slot + 1u) * 40503u;
+    if (pg->graph == GR_KIT && track_kit(t)) {       /* CESARI: the drum's values, its row */
+        const int16_t *kp = kit_pot[song.sel % NTRK][kit_lane_sel(t)];
+        for (i = 0; i < KIT_PARAMS; i++)
+            h = (h ^ (uint32_t)kp[i]) * 16777619u;
+        h ^= (kit_lane_sel(t) + 1u) * 2654435761u + kit_row_of(t) * 40503u;
+    }
     if (pg->graph == GR_SLCR && t->p[P_SLCR])        /* the SLICER's step playing */
         h ^= (sl[song.sel].idx + 1u) * 2654435761u;
     if (pg->graph == GR_SLOTS) {                     /* (a checksum over each slot) */
@@ -1380,6 +1379,47 @@ static void graph_song(void)
         }
     }
 }
+/* CESARI: the DRUM page: every parameter of the drum in rows of four under the knobs' columns, the row the knobs
+ * edit in a frame (EDIT: the next row). Each cell: its label, its value, a bar */
+#define KG_ROW 39
+#define KG_H 37
+static void graph_kit(track_t *t)
+{
+    const kit_if_t *k = track_kit(t);
+    uint32_t n, rows, sel, r, c;
+    if (!k)
+        return;
+    n = k->nparams(kit_lane_sel(t));
+    rows = kit_rows(t);
+    sel = kit_row_of(t);
+    for (r = 0; r < rows && r < 3u; r++) {
+        int32_t y = 3 + (int32_t)r * KG_ROW;
+        if (r == sel)
+            cv_frame(5, y - 1, 230, KG_H + 2, T_ACCENT);
+        for (c = 0; c < 4u; c++) {
+            uint32_t i = r * 4u + c;
+            int32_t x = 8 + (int32_t)c * 57, w = 54, vx;
+            int16_t *vp;
+            const param_desc_t *d;
+            const char *unit;
+            char val[16];
+            if (i >= n || !(d = kit_page_desc(t, i, &vp)) || !vp)
+                continue;
+            param_format(d, *vp, val, &unit);
+            cv_text(x + 2, y + 4 - AF_S_CAP_Y, &AF_S, d->label, r == sel ? T_TEXT : T_MID);
+            vx = cv_text(x + 2, y + 16 - AF_M_CAP_Y, &AF_M, val, r == sel ? T_THEME : T_MID);
+            if (unit && unit[0] && vx + 2 < x + w)
+                cv_text(vx + 2, y + 18 - AF_S_CAP_Y, &AF_S, unit, T_MID);
+            cv_rect(x + 2, y + 32, w - 4, 2, T_DIM);
+            if (d->max > d->min)
+                cv_rect(x + 2, y + 32, (w - 4) * clamp(*vp - d->min, 0, d->max - d->min) / (d->max - d->min), 2,
+                        r == sel ? T_THEME : T_MID);
+        }
+    }
+}
+#undef KG_ROW
+#undef KG_H
+
 static void draw_graph(void)
 {
     const page_t *pg = cur_page();
@@ -1471,6 +1511,10 @@ static void draw_graph(void)
         case GR_TOOLS:
             cv_oy = 0;
             panel_note("TURN TO PICK", "[OCT+] CONFIRM", 0);
+            break;
+        case GR_KIT:
+            cv_oy = 0;
+            graph_kit((track_t *)t);
             break;
 #if FELUCCA_SLICE
         case GR_SLICES:

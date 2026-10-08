@@ -184,11 +184,26 @@ static const param_desc_t *kit_page_desc(track_t *t, uint32_t i, int16_t **valp)
     return dp;
 }
 
-/* the DRUM pages: shown for a kit engine, as many as the selected drum's parameters need (4 a page) */
+/* the DRUM page: shown for a kit engine */
 static int kit_page_visible(const track_t *t, uint32_t first)
 {
     const kit_if_t *k = track_kit(t);
     return k && first < k->nparams(kit_lane_sel(t));
+}
+
+/* CESARI: the DRUM page shows every parameter of the drum, in rows of four; the knobs edit one row (EDIT: the
+ * next). Per track; a drum with fewer rows clamps it */
+static uint8_t kit_row[NTRK];
+static uint32_t kit_rows(const track_t *t)
+{
+    const kit_if_t *k = track_kit(t);
+    uint32_t n = k ? k->nparams(kit_lane_sel(t)) : 0u;
+    return n ? (n + 3u) / 4u : 1u;
+}
+static uint32_t kit_row_of(const track_t *t)
+{
+    uint32_t r = kit_row[(uint32_t)(t - trk) % NTRK], n = kit_rows(t);
+    return r < n ? r : n - 1u;
 }
 
 /* A kit's parameters in projects and user presets: in the 128 bytes a track's FM6 patch takes (project.c

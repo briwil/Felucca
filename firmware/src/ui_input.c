@@ -391,17 +391,41 @@ static void page_go(int32_t d)
     cursor_set((int32_t)(b * 16u + ui.cursor % 16u < len ? b * 16u + ui.cursor % 16u : len - 1u));
 }
 
-/* the grid's knobs: 1 STEP (the cursor), 2 LANE, 3 HIT and 4 ACC of the lane at the cursor (right on, left off) */
+/* CESARI: the grid's knobs: 1 ACC of the lane at the cursor (right on, left off), 2 VEL and 3 CHANCE of the step
+ * at the cursor (10 % a detent), 4 LEN of the pattern. The cursor is PRESETS (left / right) and ALGORITHM (the lane,
+ * up / down); SELECT turns the hit on (right) or off (left) */
 static void grid_edit(uint32_t slot, int32_t steps)
 {
-    if (slot == 0u)
-        cursor_set(ui.cursor + steps);
-    else if (slot == 1u)
-        ui.lane = (uint8_t)clamp((int32_t)ui.lane + (steps > 0 ? 1 : -1), 0, NLANE - 1);
-    else if (slot == 2u)
-        grid_hit(TSEL, ui.cursor, ui.lane, steps > 0);
-    else
+    step_t *st = &TSEL->step[ui.cursor % NSTEP];
+    if (slot == 0u) {
         grid_acc(TSEL, ui.cursor, ui.lane, steps > 0);
+    } else if (slot == 1u) {
+        if (st->time != ST_NOTE || !step_on(st))
+            return;                                       /* (an empty step has no velocity) */
+        st->flags &= (uint8_t)~SF_ACCENT;
+        st->vel = (uint8_t)clamp((int32_t)(st->vel ? st->vel : 96u) + accel(EN_K2, steps, 126), 1, 127);
+    } else if (slot == 2u) {
+        int32_t c = (int32_t)step_chance(st);
+        c = (steps > 0 ? c / 10 : (c + 9) / 10) * 10 + 10 * steps;
+        step_set_chance(st, (uint32_t)clamp(c, 10, 100));
+    } else {
+        TSEL->p[P_SLEN] = (int16_t)clamp(TSEL->p[P_SLEN] + steps, 1, NSTEP);
+        cursor_set(ui.cursor);
+    }
+}
+
+/* CESARI: SELECT on the grid: the selected lane's hit at the cursor, right on, left off */
+static void grid_select(int32_t s)
+{
+    if (chain_busy()) { ui_message("STOP TO EDIT"); return; }
+    if ((int32_t)ui.cursor < TSEL->p[P_SLEN])
+        grid_hit(TSEL, ui.cursor, ui.lane, s > 0);
+}
+
+/* CESARI: ALGORITHM on the grid: the lane, down (right) or up (left) */
+static void grid_lane(int32_t s)
+{
+    ui.lane = (uint8_t)clamp((int32_t)ui.lane + (s > 0 ? 1 : -1), 0, NLANE - 1);
 }
 
 /* the keys on the grid (presses): a white key toggles the selected lane at its step of the page (its accent
@@ -567,6 +591,8 @@ static void edit_param(uint32_t slot, int32_t steps)
     d = page_desc(pg, slot, &vp);
     if (!d || !vp || d->max == d->min)
         return;
+    if (pg->scope == SC_KIT && d->fmt != F_ENUM && d->max - d->min > 32)
+        steps *= 2;                                       /* (CESARI: a drum's 0..127 in about four turns, not eight) */
     v = param_turn(d, *vp, accel(EN_K1 + slot, steps, d->fmt == F_ENUM ? 0 : d->max - d->min));
     *vp = (int16_t)v;
     if (pg->scope != SC_GLOBAL && pg->scope != SC_KIT)   /* (a drum's parameter is not in p[]: no automation yet) */
@@ -731,6 +757,8 @@ static void presets_turn(int32_t s)
     uint32_t g = pg->graph;
     if (ui.home || g == GR_BROWSE) {
         preset_step(s);
+    } else if (grid_on()) {
+        cursor_set(ui.cursor + s);                        /* (CESARI: the grid's cursor; its knobs edit the step) */
     } else if (g == GR_ROLL || g == GR_CHANCE || g == GR_USER || g == GR_SLOTS || g == GR_PATS || g == GR_SONG) {
         edit_param(0, s);                                 /* KNOB 1's (STEP: STOP TO EDIT while a song plays) */
         ui.hot_col = 0;
@@ -789,7 +817,37 @@ static int page_tap(uint32_t b)
         open_global();                                  /* MIXER -> GLOBAL -> SYSTEM -> MIXER */
         return 0;
     }
-    if (b == B_EDIT && song.seq_mode && !ui.home && cur_page()->graph == GR_ROLL) {   /* STEP: EDIT clears the step */
+    if (b == B_EDIT && grid_on() && track_kit(TSEL)) {  /* CESARI: the grid: EDIT opens the lane's drum */
+        const kit_if_t *k = track_kit(TSEL);
+        int32_t l = k->lane_of(DRUM_LANE_NOTE[ui.lane % NLANE]);
+        uint32_t back = ui.page, i;
+        if (l >= 0)
+            kit_sel[song.sel % NTRK] = (uint8_t)l;
+        kit_row[song.sel % NTRK] = 0;
+        for (i = 0; i < NPAGES && PAGES[i].scope != SC_KIT; i++)
+            ;
+        ui.page = (uint8_t)i;
+        ui.fam_last[FAM_EDIT] = ui.page;
+        page_entered();
+        ui.kit_back = (uint8_t)(back + 1u);
+        return 1;
+    }
+    if (b == B_EDIT && !ui.home && cur_page()->scope == SC_KIT) {   /* CESARI: the DRUM page: the next row of four */
+        uint32_t ti = song.sel % NTRK, r = kit_row_of(TSEL);
+        ui.force = 1;
+        ui.hot_t = 0;
+        if (r + 1u < kit_rows(TSEL)) {
+            kit_row[ti] = (uint8_t)(r + 1u);
+            return 1;
+        }
+        kit_row[ti] = 0;
+        if (ui.kit_back) {                              /* (from the grid: back to it) */
+            ui.page = (uint8_t)(ui.kit_back - 1u);
+            page_entered();
+            return 1;
+        }
+    }
+    if (b == B_EDIT && song.seq_mode && !ui.home && cur_page()->graph == GR_ROLL && !drum_track(TSEL)) {   /* STEP: EDIT clears the step */
         if (chain_busy()) { ui_message("STOP TO EDIT"); return 1; }
         step_clear(&TSEL->step[ui.cursor]);
         cursor_set(ui.cursor + 1);
@@ -1114,10 +1172,16 @@ static void ui_input(void)
     kq |= lay;
     if (!lay && (s = panel_enc(EN_PRESET)) != 0)
         presets_turn(s);
-    if (!lay && (s = panel_enc(EN_ALGO)) != 0)     /* ALGORITHM: the selected track, on every page */
-        track_select((uint32_t)clamp((int32_t)song.sel + (s > 0 ? 1 : -1), 0, NTRK - 1));
+    if (!lay && (s = panel_enc(EN_ALGO)) != 0) {   /* ALGORITHM: the selected track, on every page */
+        if (grid_on())
+            grid_lane(s);                               /* (CESARI: the grid's lane) */
+        else
+            track_select((uint32_t)clamp((int32_t)song.sel + (s > 0 ? 1 : -1), 0, NTRK - 1));
+    }
     if ((s = glo ? sel : panel_enc(EN_SELECT)) != 0) {   /* SELECT knob = global tempo; */
-        if (glo || !(ui_prefs & PREF_BPM_LOCK)) {
+        if (!glo && grid_on()) {
+            grid_select(s);                             /* (CESARI: the grid's hit; GLO + SELECT is the tempo) */
+        } else if (glo || !(ui_prefs & PREF_BPM_LOCK)) {
             song.g[G_BPM] = (int16_t)clamp(song.g[G_BPM] + accel(EN_SELECT, s, 200), GP[G_BPM].min, GP[G_BPM].max);
             ui.bpm_t = 40;                              /* the header's BPM lights up; no message over the header */
         } else {                                        /* MENU > BPM LOCK ON (#58): only with GLO held (and on GLO >

@@ -779,17 +779,17 @@ static void draw_columns(void)
         draw_column(3, "AMT", val, unit, a ? VAL(3u) : T_DIM, RATIO(&TP[id + 2u], a), mod_src_icon(MS_OFF));
         return;
     }
-    if (cur_page()->scope == SC_STEP && drum_track(TSEL)) {   /* the grid: STEP LANE HIT ACC */
+    if (cur_page()->scope == SC_STEP && drum_track(TSEL)) {   /* CESARI: the grid: ACC VEL CHANCE LEN */
         const step_t *st = &seq_steps(TSEL)[ui.cursor];
-        uint32_t b = 1u << ui.lane, on = (step_lanes(st) & b) != 0u, ac = (step_accents(st) & b) != 0u;
-        char sn[8], sl[8];
-        fmt_int(sn, (int32_t)ui.cursor + 1);
-        str_cpy(sl, "/", 8);
-        fmt_int(sl + 1, TSEL->p[P_SLEN]);
-        draw_column(0, "STEP", sn, sl, VAL(0u), -1, ICON_AUTO);
-        draw_column(1, "LANE", drum_lane_name(TSEL, ui.lane), "", VAL(1u), -1, ICON_AUTO);
-        draw_column(2, "HIT", on ? "ON" : "--", "", on ? VAL(2u) : T_DIM, -1, ICON_AUTO);
-        draw_column(3, "ACC", ac ? "ON" : "--", "", ac ? VAL(3u) : T_DIM, -1, ICON_AUTO);
+        uint32_t b = 1u << ui.lane, on = step_on(st) && st->time == ST_NOTE, ac = (step_accents(st) & b) != 0u;
+        char sv[8], sc[8], sl[8];
+        fmt_int(sv, on ? (int32_t)(st->vel ? st->vel : 96u) : 0);
+        fmt_int(sc, (int32_t)step_chance(st));
+        fmt_int(sl, TSEL->p[P_SLEN]);
+        draw_column(0, "ACC", ac ? "ON" : "--", "", ac ? VAL(0u) : T_DIM, -1, ICON_AUTO);
+        draw_column(1, "VEL", on ? sv : "--", "", on ? VAL(1u) : T_DIM, on ? (int32_t)(st->vel ? st->vel : 96u) * 1000 / 127 : -1, ICON_AUTO);
+        draw_column(2, "CHNC", sc, "%", VAL(2u), (int32_t)step_chance(st) * 10, ICON_PROB);
+        draw_column(3, "LEN", sl, "", VAL(3u), -1, ICON_AUTO);
         return;
     }
     if (cur_page()->scope == SC_STEP) {

@@ -1055,21 +1055,26 @@ static int test_grid(void)
     leds = grid_leds();
     ok &= (leds >> key_at(0, 0) & 1u) != 0u;
     bad += check("ACC held: a tap adds the hit accented, again drops the accent only; the LEDs show accents", ok);
-    /* the knobs: STEP LANE HIT ACC */
-    turn(EN_K1, 2);
-    turn(EN_K2, 1);
-    turn(EN_K3, 1);
-    ok = ui.cursor == 2u && ui.lane == 2u && t->step[2].hit == 1u << DV_CLAP;
-    turn(EN_K4, 1);
+    /* CESARI: PRESETS the cursor, ALGORITHM the lane, SELECT the hit; the knobs ACC VEL CHANCE LEN */
+    turn(EN_PRESET, 2);
+    turn(EN_ALGO, 1);
+    turn(EN_SELECT, 1);
+    ok = ui.cursor == 2u && ui.lane == 2u && t->step[2].hit == 1u << DV_CLAP && song.g[G_BPM] == 120 && song.sel == 0u;
+    turn(EN_K1, 1);
     ok &= t->step[2].acc == 1u << DV_CLAP;
-    turn(EN_K3, -1);
+    turn(EN_SELECT, -1);
     ok &= !t->step[2].hit && !t->step[2].acc && t->step[2].time == ST_REST;
-    turn(EN_K4, 1);
+    turn(EN_K1, 1);
     ok &= t->step[2].hit == 1u << DV_CLAP && t->step[2].acc == 1u << DV_CLAP;
-    bad += check("KNOB 1 STEP, 2 LANE, 3 HIT on / off, 4 ACC (an accent adds the hit)", ok);
-    press(B_EDIT);
-    bad += check("EDIT: the cursor step cleared, on to the next", t->step[2].time == ST_REST && !t->step[2].hit && ui.cursor == 3u &&
-                 grid_on());
+    bad += check("grid: PRESETS the cursor, ALGORITHM the lane, SELECT the hit on / off, KNOB 1 ACC (adds the hit)", ok);
+    turn(EN_K2, 5);
+    turn(EN_K3, -2);
+    turn(EN_K4, 4);
+    ok = t->step[2].vel == 101u && step_chance(&t->step[2]) == 80u && t->p[P_SLEN] == 20;
+    turn(EN_K4, -4);
+    bad += check("grid: KNOB 2 the step's VEL, 3 its CHANCE (10 % a detent), 4 the pattern's LEN", ok && t->p[P_SLEN] == 16);
+    t->step[2] = (step_t){{0}, 0, ST_REST, 0, 0, 0, 0, 0};
+    ui.cursor = 3u;
     /* pages: LEN 32, the page keys */
     t->p[P_SLEN] = 32;
     leds = grid_leds();
@@ -5982,17 +5987,17 @@ static int test_kit808(void)
         mix_block(o, CTL);
     press(B_EDIT);
     page_title(ti);
-    ok = cur_page()->scope == SC_KIT && str_eq(ti, "KICK 1/2") && kit_pot[part][D8S_BD][2] == 87;
-    bad += check("808: EDIT opens the DRUM pages on the kick (KICK 1/2), every drum at its 8W8 defaults", ok);
+    ok = cur_page()->scope == SC_KIT && str_eq(ti, "KICK") && kit_pot[part][D8S_BD][2] == 87;
+    bad += check("808: EDIT opens the DRUM pages on the kick (KICK), every drum at its 8W8 defaults", ok);
     k = 7u + D8S_LC;                                      /* the key of the low conga (eng_808.c k808_keys) */
     key_down(k); frame(); key_up(k); frame();
     page_title(ti);
-    ok = kit_sel[part] == D8S_LC && str_eq(ti, "LOCNG 1/2");
-    bad += check("808: a drum played on the keys is the one the DRUM pages edit (LOCNG 1/2)", ok);
+    ok = kit_sel[part] == D8S_LC && str_eq(ti, "LOCNG");
+    bad += check("808: a drum played on the keys is the one the DRUM pages edit (LOCNG)", ok);
     turn(EN_K2, 5);                                       /* (TUNE) */
-    ok = kit_pot[part][D8S_LC][1] == 69 && kit_pot[part][D8S_LT][1] == 64 && kit_pot[part][D8S_MC][1] == 64;
+    ok = kit_pot[part][D8S_LC][1] == 74 && kit_pot[part][D8S_LT][1] == 64 && kit_pot[part][D8S_MC][1] == 64;
     mix_block(o, CTL);
-    ok &= k808(part)->pot[D8S_LC][D8P_TUNE] == 69 && k808(part)->pot[D8S_LT][D8P_TUNE] == 64;
+    ok &= k808(part)->pot[D8S_LC][D8P_TUNE] == 74 && k808(part)->pot[D8S_LT][D8P_TUNE] == 64;
     bad += check("808: KNOB 2 tunes the low conga alone (not its tom); the audio code takes it at its next block", ok);
     e0 = kit_energy(TSEL, 36, 64);
     for (k = 0; k < NVOICE; k++)
@@ -6011,7 +6016,7 @@ static int test_kit808(void)
     kit_pot[part][D8S_SD][2] = 1; kit_pot[part][D8S_CY][1] = 1;
     project_load(2); frame();
     ok = TSEL->eng_req == ENGI_808 && kit_pot[part][D8S_SD][2] == 99 && kit_pot[part][D8S_CY][1] == 7 &&
-         kit_pot[part][D8S_BD][0] == 0 && kit_pot[part][D8S_LC][1] == 69;
+         kit_pot[part][D8S_BD][0] == 0 && kit_pot[part][D8S_LC][1] == 74;
     bad += check("808: a project keeps every drum's values", ok);
     kit_pot[part][D8S_SD][2] = 55;
     up_store(5, "MY 808");
@@ -6038,6 +6043,7 @@ static int test_kit808(void)
 static int test_kit606(void)
 {
     int bad = 0, ok;
+    int16_t *hv;
     char ti[20];
     uint32_t b, k, voices = 0, part, quiet = 0;
     int32_t o[2u * CTL];
@@ -6050,18 +6056,18 @@ static int test_kit606(void)
         mix_block(o, CTL);
     press(B_EDIT);
     page_title(ti);
-    ok = cur_page()->scope == SC_KIT && str_eq(ti, "KICK 1/2") && kit_pot[part][D6_BD][2] == 24 &&
+    ok = cur_page()->scope == SC_KIT && str_eq(ti, "KICK") && kit_pot[part][D6_BD][2] == 24 &&
          kit_pot[part][D6_CP][3] == 64;
     if (!ok) printf("  [%s] scope %d bd %d cp %d\n", ti, cur_page()->scope, kit_pot[part][D6_BD][2], kit_pot[part][D6_CP][3]);
-    bad += check("606: EDIT opens the DRUM pages on the kick (KICK 1/2), every drum at its 6W6 defaults", ok);
+    bad += check("606: EDIT opens the DRUM pages on the kick (KICK), every drum at its 6W6 defaults", ok);
     k = 7u + D6_CP;                                       /* the key of the clap (eng_606.c k606_keys) */
     key_down(k); frame(); key_up(k); frame();
     page_title(ti);
-    ok = kit_sel[part] == D6_CP && str_eq(ti, "CLAP 1/2");
-    bad += check("606: a drum played on the keys is the one the DRUM pages edit (CLAP 1/2)", ok);
+    ok = kit_sel[part] == D6_CP && str_eq(ti, "CLAP");
+    bad += check("606: a drum played on the keys is the one the DRUM pages edit (CLAP)", ok);
     turn(EN_K2, 5);                                       /* (TUNE) */
     mix_block(o, CTL);
-    ok = kit_pot[part][D6_CP][1] == 69 && kit_pot[part][D6_SD][1] == 70 && k606(part)->pot[D6_CP][D6P_TUNE] == 69;
+    ok = kit_pot[part][D6_CP][1] == 74 && kit_pot[part][D6_SD][1] == 70 && k606(part)->pot[D6_CP][D6P_TUNE] == 74;
     bad += check("606: KNOB 2 tunes the clap alone; the audio code takes it at its next block", ok);
     for (k = 0; k < NVOICE; k++)
         voices += TSEL->v[k].active;
@@ -6083,13 +6089,31 @@ static int test_kit606(void)
     for (b = 0; b < 4u; b++)
         mix_block(o, CTL);
     bad += check("606: the closed hat chokes the open hat", k606(part)->rt[D6_OH].choke == 0.0f);
+    /* CESARI: the DRUM page's rows (EDIT the next), and EDIT on the grid opens the lane's drum, EDIT back */
+    fm1_ms += 2000u;                                      /* (no double tap with the EDIT that opened the page) */
+    press(B_EDIT);
+    ok = cur_page()->scope == SC_KIT && kit_row_of(TSEL) == 1u && page_desc(cur_page(), 0, &hv) && hv == &kit_pot[part][D6_CP][4];
+    press(B_EDIT);
+    ok &= cur_page()->scope == SC_KIT ? 0 : 1;                /* (CLAP: 8 parameters, 2 rows; then EDIT 1) */
+    bad += check("606: EDIT on the DRUM page: the next row of four, past the last the next EDIT page", ok);
+    go_page(GR_ROLL); frame();
+    ui.lane = 1u;                                         /* the grid's SNARE lane */
+    fm1_ms += 2000u;
+    press(B_EDIT);
+    page_title(ti);
+    ok = cur_page()->scope == SC_KIT && str_eq(ti, "SNARE") && kit_row_of(TSEL) == 0u;
+    press(B_EDIT); press(B_EDIT);                         /* (SNARE: 9 parameters, 3 rows) */
+    ok &= kit_row_of(TSEL) == 2u;
+    press(B_EDIT);
+    ok &= grid_on() && kit_row_of(TSEL) == 0u;
+    bad += check("606: EDIT on the grid opens the lane's drum (SNARE); EDIT through its rows, then back to the grid", ok);
     song.playing = 0;
     kit_pot[part][D6_SD][4] = 99; kit_pot[part][D6_CY][1] = 7;
     project_save(2);
     kit_pot[part][D6_SD][4] = 1; kit_pot[part][D6_CY][1] = 1;
     project_load(2); frame();
     ok = TSEL->eng_req == ENGI_606 && kit_pot[part][D6_SD][4] == 99 && kit_pot[part][D6_CY][1] == 7 &&
-         kit_pot[part][D6_BD][0] == 0 && kit_pot[part][D6_CP][1] == 69;
+         kit_pot[part][D6_BD][0] == 0 && kit_pot[part][D6_CP][1] == 74;
     bad += check("606: a project keeps every drum's values", ok);
     set_engine_of(TSEL, ENGI_808); frame();
     for (b = 0; b < 64u && TSEL->engine != ENGI_808; b++)
