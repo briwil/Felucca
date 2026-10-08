@@ -87,7 +87,8 @@ static void pat_del(pat_t *p, uint32_t i)
 {
     if (i >= p->n)
         return;
-    memmove(&p->note[i], &p->note[i + 1u], (p->n - i - 1u) * sizeof p->note[0]);
+    for (; i + 1u < p->n; i++)                          /* (no memmove on the device) */
+        p->note[i] = p->note[i + 1u];
     p->n--;
 }
 /* every note starting at step s (all rows) gone */
