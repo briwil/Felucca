@@ -239,8 +239,7 @@ if [ -f build/gen/felucca_tables.h ]; then
         run "SLICE: tables, onsets, reverse, keys, modes, MAN slices and their store, demos" "$OUT/slice_test" \
             build/slice_demo/loop build/slice_demo
     else
-        echo "== SLICE: build/ was made with FELUCCA_SLICE=0 (no BREAK); run ./build.sh without it first"
-        fail=1
+        echo "== SLICE: not built (Cesari builds without it, FELUCCA_SLICE=0): its test is skipped"
     fi
 else
     echo "== skip hostsim (run ./build.sh once)"
