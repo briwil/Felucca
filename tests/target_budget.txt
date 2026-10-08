@@ -3,10 +3,10 @@
 # Rewritten by BUDGET_UPDATE=1.
 analog_render 585
 phase_render 79
-sample_render 126
+sample_render 1138
 formant_render 314
 phys_render 61
-drum_render 86
+drum_render 686
 fm6_render 372
 fm6_op_run 72
 fm6_op_fb 26
