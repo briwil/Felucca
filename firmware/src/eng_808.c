@@ -120,6 +120,9 @@ static int k808_render(uint32_t part, float *dry, float *rev, float *dly, uint32
     return 1;
 }
 
+/* the grid's rows, top down: the drums most patterns use first */
+static const uint8_t K808_ORDER[D8S_NUM] = {D8S_BD, D8S_SD, D8S_CP, D8S_CH, D8S_OH, D8S_CY, D8S_RS, D8S_CB,
+                                            D8S_LT, D8S_MT, D8S_HT, D8S_CL, D8S_MA, D8S_LC, D8S_MC, D8S_HC};
 static const kit_if_t KIT_808 = {
     .nlanes = D8S_NUM,
     .gain = 2.2f,                /* (8W8's kit balance is ~10 dB under Felucca's parts) */
@@ -127,6 +130,8 @@ static const kit_if_t KIT_808 = {
     .nparams = k808_nparams,
     .param = k808_param,
     .lane_of = k808_lane_of,
+    .notes = K808_NOTE,
+    .order = K808_ORDER,
     .init = k808_init,
     .set = k808_set,
     .get = k808_get,

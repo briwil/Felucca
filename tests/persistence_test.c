@@ -65,6 +65,14 @@ static void ed_str(const char *s, uint32_t n) { (void)s; (void)n; }
 #include "../firmware/src/editor_preferences.c"
 #include "../firmware/src/editor_menu.c"
 
+static int pat_has(const pat_t *p, uint32_t start, uint32_t row)
+{
+    uint32_t i;
+    for (i = 0; i < p->n; i++)
+        if (p->note[i].start == start && p->note[i].row == row)
+            return 1;
+    return 0;
+}
 static int check(const char *what, int ok)
 {
     printf("persist: %-66s %s\n", what, ok ? "ok" : "FAIL");
@@ -342,10 +350,10 @@ int main(void)
                   st_load(OBJ_SETTINGS, &p, sizeof p) == (int)sizeof p && p.palette == palette_to_stored(1));
 
     reset();
-    trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 96, 0, 0};
+    st_set(&trk[0], 0, (step_t){{60}, 1, ST_NOTE, 0, 96, 0, 0});
     project_save(0);
     old = proj_slot[0];
-    trk[0].step[0].note[0] = 72;
+    st_set(&trk[0], 0, (step_t){{72}, 1, ST_NOTE, 0, 96});
     fail_after = 1;
     project_save(0);
     fail_after = -1;
@@ -355,7 +363,7 @@ int main(void)
     project_save(0);
     bad += check("successful project save publishes new RAM", !strcmp(ui.msg, "SAVED") &&
                   proj_import(&proj_scratch, &proj_slot[0], sizeof proj_slot[0]) &&
-                  proj_scratch.t[0].step[0].note[0] == 72u && proj_ok(&proj_scratch));
+                  pat_has(&proj_scratch.t[0].pat, 0, 72) && proj_ok(&proj_scratch));
     before = erases;
     transport_req = 1;
     project_save(1);
@@ -369,7 +377,7 @@ int main(void)
     {   /* names: a project's through flash; a failed rename keeps the old one in RAM and flash */
         char n[16];
         project_store_t keep;
-        step_t st0 = trk[0].step[0];
+        step_t st0 = (*st_of(&trk[0], 0));
         project_save_as(0, "LOFI JAM");
         memset(proj_slot[0].raw, 0, 8);                       /* (the RAM copy lost: read it back from flash) */
         proj_fetch(0);
@@ -388,19 +396,22 @@ int main(void)
         transport_req = 0;
         bad += check("project rename: flash has the new name, the music as it was", project_rename(0, "DUB") == 0 &&
                       !strcmp(ui.msg, "RENAMED") && (memset(proj_slot[0].raw, 0, 8), proj_fetch(0), project_name(0, n)) &&
-                      !strcmp(n, "DUB") && proj_scratch.t[0].step[0].note[0] == st0.note[0]);
+                      !strcmp(n, "DUB") && pat_has(&proj_scratch.t[0].pat, 0, st0.note[0]));
     }
     {   /* FUN7 itself refuses a step outside its fields: a damaged slot is empty, the tracks stay */
-        step_t keep = trk[0].step[0];
+        step_t keep = (*st_of(&trk[0], 0));
         old = proj_slot[0];
-        proj_slot[0].raw[68 + P_COUNT + 2 + 4] = 7;               /* track 1 step 1: n = 7 */
-        bad += check("damaged FUN7 slot (hash ok, n > 4) is refused", (memcpy(proj_slot[0].raw + PROJ_STORE_SIZE - 4,
+        {                                                         /* CESARI: track 1's first note: velocity 0 */
+            uint32_t at = 68u + NTRK * (P_COUNT + 2u) + KIT_LANES + 1u;
+            proj_slot[0].raw[at + 2] &= 0x07u; proj_slot[0].raw[at + 3] &= (uint8_t)~3u;
+        }
+        bad += check("damaged FUN9 slot (hash ok, a note of velocity 0) is refused", (memcpy(proj_slot[0].raw + PROJ_STORE_SIZE - 4,
                       &(uint32_t){proj_hash(proj_slot[0].raw, PROJ_STORE_SIZE - 4)}, 4), !project_used(0)));
         st_save(OBJ_PROJECT0, &proj_slot[0], sizeof proj_slot[0]);
         ui.msg[0] = 0;
         project_load(0);
         bad += check("loading it says EMPTY SLOT and keeps the steps", !strcmp(ui.msg, "EMPTY SLOT") &&
-                      !memcmp(&trk[0].step[0], &keep, sizeof keep));
+                      !memcmp(&(*st_of(&trk[0], 0)), &keep, sizeof keep));
         proj_slot[0] = old;
         st_save(OBJ_PROJECT0, &proj_slot[0], sizeof proj_slot[0]);
     }
@@ -421,9 +432,8 @@ int main(void)
         st_save(OBJ_PROJECT0 + 3u, &v5, sizeof v5);
         memset(proj_slot[3].raw, 0, 4);
         project_load(3);
-        bad += check("FUN5 load bounds steps and masks lane accents", trk[0].step[0].n == 4u &&
-                      trk[0].step[0].time == ST_REST && trk[0].step[0].note[0] == 127u &&
-                      !trk[0].step[0].note[1] && trk[0].step[0].acc == 5u && project_used(3));
+        bad += check("FUN5 load bounds steps (a step of no time: a REST)", (*st_of(&trk[0], 0)).time == ST_REST &&
+                      !(*st_of(&trk[0], 0)).n && project_used(3));   /* (CESARI: the bad step: a REST, no notes) */
         bad += check("FUN5 load clamps a parameter into its range", trk[0].p[P_LEVEL] == TP[P_LEVEL].max);
         for (i = 0; i < P_COUNT; i++) {
             uint32_t e;
@@ -438,7 +448,7 @@ int main(void)
     chain_config.count = 1;
     chain_config.row[0] = (chain_row_t){3, 1};
     bad += check("SONG sources use the same step bounds", chain_prepare() == 0 &&
-                  !memcmp(&chain.source[3].step[0][0], &trk[0].step[0], sizeof(step_t)));
+                  !memcmp(&chain.source[3].pat[0].note[0], &trk[0].pat.note[0], sizeof(note_t)));
     seq_stop();
     transport_req = 0;
     memset(&r, 0, sizeof r);

@@ -343,16 +343,21 @@ static int up_store(uint32_t k, const char *name)
     up_set_name(&r, k, name);
     for (i = 0; i < P_COUNT; i++)
         up_set_value(&r, i, motion_base_value(TSEL, i));
-    up_pat_from(&r, TSEL->step);
-    if (drum_track(TSEL)) {                             /* a DRUM track that strikes a lane: its grid */
-        uint32_t any = 0;
+    {
+        static step_t view[16];                         /* (CESARI: the notes as the old 16 steps) */
         for (i = 0; i < 16u; i++)
-            any |= step_lanes(&TSEL->step[i]);
-        if (any) {
-            r.ver = UP_VER_GRID;
-            for (i = 0; i < 16u; i++) {
-                r.note[i] = (uint8_t)step_lanes(&TSEL->step[i]);
-                r.flags[i] = (uint8_t)step_accents(&TSEL->step[i]);
+            pat_step_view(TSEL, &TSEL->pat, i, &view[i]);
+        up_pat_from(&r, view);
+        if (drum_track(TSEL)) {                         /* a kit track that strikes a lane: its grid */
+            uint32_t any = 0;
+            for (i = 0; i < 16u; i++)
+                any |= step_lanes(&view[i]);
+            if (any) {
+                r.ver = UP_VER_GRID;
+                for (i = 0; i < 16u; i++) {
+                    r.note[i] = (uint8_t)step_lanes(&view[i]);
+                    r.flags[i] = (uint8_t)step_accents(&view[i]);
+                }
             }
         }
     }

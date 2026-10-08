@@ -222,19 +222,21 @@ static int16_t stored_param(uint32_t slot, uint32_t track, uint32_t id)
 static uint8_t stored_note(uint32_t slot, uint32_t track, uint32_t step)
 {
     project_t p;
-    return proj_import(&p, &proj_slot[slot], sizeof proj_slot[slot]) ? p.t[track].step[step].note[0] : 0;
+    uint32_t i;
+    if (!proj_import(&p, &proj_slot[slot], sizeof proj_slot[slot]))
+        return 0;
+    for (i = 0; i < p.t[track].pat.n; i++)               /* (CESARI: the first note starting there) */
+        if (p.t[track].pat.note[i].start == step)
+            return p.t[track].pat.note[i].row;
+    return 0;
 }
 static int msg_is(const char *s) { return ui.msg_t && str_eq(ui.msg, s); }
 static void my_steps(track_t *t)                  /* "recorded" steps */
 {
     uint32_t i;
     track_defaults_steps(t);
-    for (i = 0; i < 32u; i += 3u) {
-        t->step[i].note[0] = (uint8_t)(40 + i);
-        t->step[i].n = 1;
-        t->step[i].time = ST_NOTE;
-        t->step[i].vel = 99;
-    }
+    for (i = 0; i < 32u; i += 3u)
+        st_set(t, i, (step_t){{(uint8_t)(40 + i)}, 1, ST_NOTE, 0, 99});
     t->p[P_SLEN] = 32;
 }
 
@@ -253,7 +255,7 @@ static int steps_are(const track_t *t, uint32_t n)  /* steps 1..16 = PATTERNS[n]
     uint32_t i;
     for (i = 0; i < NSTEP; i++) {
         uint8_t want = i < 16u ? PATTERNS[n].note[i] : 0u;
-        if (t->step[i].note[0] != want || t->step[i].n != (want ? 1u : 0u))
+        if ((*st_of(t, i)).note[0] != want || (*st_of(t, i)).n != (want ? 1u : 0u))
             return 0;
     }
     return t->p[P_SLEN] == 16;
@@ -328,7 +330,7 @@ static int test_sound_loads(void)
     before = *t;
     turn(EN_PRESET, 1);                           /* HOME: the next preset */
     bad += check("PRESETS on HOME loads the sound: steps, LEN, DIV untouched", t->preset == (uint8_t)((before.preset + 1u) % ENGINES[0]->npresets) &&
-                 !memcmp(t->step, before.step, sizeof t->step) && t->p[P_SLEN] == 32 && t->p[P_SDIV] == 1);
+                 !memcmp(&t->pat, &before.pat, sizeof(pat_t)) && t->p[P_SLEN] == 32 && t->p[P_SDIV] == 1);
     bad += check("..ARP, SCL, the SLICER and the mix stay the track's", t->p[P_AMODE] == 2 && t->p[P_AOCT] == 3 && t->p[P_SCALE] == 2 &&
                  t->p[P_TRANS] == 5 && t->p[P_SLCR] == SL_GATE && t->p[P_SLPAT] == 4 && t->p[P_LEVEL] == 90);
     bad += check("..and no warning about the sequence", !msg_is("T1 SEQ REPLACED"));
@@ -345,16 +347,16 @@ static int test_sound_loads(void)
     for (i = 0; i < 6u; i++)                      /* several loads, into the next engine */
         turn(EN_PRESET, 1);
     bad += check("browsing on, into another engine: the steps still untouched", t->eng_req != before.eng_req &&
-                 !memcmp(t->step, before.step, sizeof t->step) && t->p[P_AMODE] == 2);
+                 !memcmp(&t->pat, &before.pat, sizeof(pat_t)) && t->p[P_AMODE] == 2);
     bad += check("browsing keeps the copy from before the first load", undo.trk == 1u && undo.what == UNDO_SOUND &&
                  undo.p[P_E0 + 1] == before.p[P_E0 + 1] && undo.eng == before.eng_req && undo.preset == before.preset);
-    t->step[0].note[0] = 99;                      /* recorded after the loads */
+    st_set(t, 0, (step_t){{99}, 1, ST_NOTE, 0, 96});   /* recorded after the loads */
     hold(B_SAVE);
     bad += check("SAVE held: the sound back (UNDO/REDO T1); steps recorded since stay", same_sound(t, &before) &&
-                 t->step[0].note[0] == 99 && msg_is("UNDO/REDO T1"));
+                 (*st_of(t, 0)).note[0] == 99 && msg_is("UNDO/REDO T1"));
     bad += check("SAVE held does not open the SAVE pages", ui.home);
     hold(B_SAVE);
-    bad += check("SAVE held again: the loads again (redo)", t->eng_req != before.eng_req && t->step[0].note[0] == 99);
+    bad += check("SAVE held again: the loads again (redo)", t->eng_req != before.eng_req && (*st_of(t, 0)).note[0] == 99);
     hold(B_SAVE);
     t->p[P_LEVEL] = 50;                           /* a mix change after the undo */
     turn(EN_PRESET, 1);                           /* a load after an undo copies the track as it is now */
@@ -370,7 +372,7 @@ static int test_sound_loads(void)
     track_select(1);
     set_engine(trk[1].eng_req);                   /* TOOLS INIT */
     bad += check("TOOLS INIT: the sound only (steps and SLICER kept), a copy of T2", undo.trk == 2u &&
-                 !memcmp(trk[1].step, before.step, sizeof before.step) && trk[1].p[P_SLCR] == SL_STUT);
+                 !memcmp(&trk[1].pat, &before.pat, sizeof(pat_t)) && trk[1].p[P_SLCR] == SL_STUT);
     track_select(0);
     my_steps(&trk[0]);
     trk[0].p[P_SDIV] = 2;
@@ -378,14 +380,13 @@ static int test_sound_loads(void)
     bad += check("a user preset keeps its pattern in the record (format unchanged)", up_has_pat(3) && up_rec(3)->note[0] == 40);
     trk[0].p[P_SDIV] = 0;
     track_defaults_steps(&trk[0]);
-    trk[0].step[5].note[0] = 33;
-    trk[0].step[5].n = 1;
+    st_set(&trk[0], 5, (step_t){{33}, 1, ST_NOTE, 0, 96});
     before = trk[0];
     up_load(3);
     bad += check("a user preset load: the sound only (steps, DIV kept); the copy is now T1's", trk[0].user == 4u && undo.trk == 1u &&
-                 !memcmp(trk[0].step, before.step, sizeof before.step) && trk[0].p[P_SDIV] == 0);
+                 !memcmp(&trk[0].pat, &before.pat, sizeof(pat_t)) && trk[0].p[P_SDIV] == 0);
     undo_swap();
-    bad += check("undo of a user preset load", trk[0].user == 0 && !memcmp(trk[0].step, before.step, sizeof before.step));
+    bad += check("undo of a user preset load", trk[0].user == 0 && !memcmp(&trk[0].pat, &before.pat, sizeof(pat_t)));
     /* project load: no copy, and the old one is gone */
     project_save(1);
     up_load(3);
@@ -433,7 +434,7 @@ static int test_sound_loads(void)
     project_load(0);
     bad += check("saved SAMPLE PERC project: a DRUM track (its kit), the rest of the sound and every step kept",
                  t->eng_req == ENGI_DRUM && t->preset == 0u && perc_kit(t) &&
-                 !memcmp(t->p, before.p, P_E0 * sizeof t->p[0]) && !memcmp(t->step, before.step, sizeof t->step));
+                 !memcmp(t->p, before.p, P_E0 * sizeof t->p[0]) && !memcmp(&t->pat, &before.pat, sizeof(pat_t)));
     bad += check("  its GM hits play as drums (kick, snare, closed hat on their lanes)", gm_hits_play(t));
     {   /* a user preset of SAMPLE PERC (UP_PUT from an older editor, or a bank read): DRUM, its kit */
         up_rec_t r;
@@ -480,7 +481,11 @@ static int test_sound_loads(void)
         memcpy(legacy.t[ti].p, decoded.t[ti].p, 61u * sizeof(int16_t));
         memcpy(legacy.t[ti].p + 61, decoded.t[ti].p + P_E0, 8u * sizeof(int16_t));
         legacy.t[ti].engine = decoded.t[ti].engine; legacy.t[ti].preset = decoded.t[ti].preset;
-        for (uint32_t st = 0; st < NSTEP; st++) memcpy(&legacy.t[ti].step[st], &decoded.t[ti].step[st], sizeof(step10_t));
+        for (uint32_t st = 0; st < NSTEP; st++) {        /* (CESARI: the notes as the old steps) */
+            step_t v;
+            pat_step_view_k(0, &decoded.t[ti].pat, st, &v);
+            memcpy(&legacy.t[ti].step[st], &v, sizeof(step10_t));
+        }
     }
     legacy.t[3].engine = 0;
     legacy.g[G_DRLVL] = 71; legacy.g[G_DRREV] = 43;
@@ -491,7 +496,7 @@ static int test_sound_loads(void)
     bad += check("old GM projects (the drum part) load as DRUM's kit, their mix and steps kept",
                  trk[3].eng_req == ENGI_DRUM && trk[3].preset == 0u && perc_kit(&trk[3]) &&
                  trk[3].p[P_LEVEL] == 71 && trk[3].p[P_REV] == 43 && trk[3].p[P_SDIV] == 3 &&
-                 !memcmp(trk[3].step, before.step, sizeof trk[3].step));
+                 !memcmp(&trk[3].pat, &before.pat, sizeof(pat_t)));
     bad += check("  their GM hits play as drums", gm_hits_play(&trk[3]));
     bad += check("  its old drum channel (10, in id 24) loads as REVERB TYPE ROOM", song.g[G_RTYPE] == 0);
     printf("ui: undo copy %u bytes\n", (unsigned)sizeof undo);
@@ -523,14 +528,12 @@ static int test_patterns(void)
     bad += check("SAVE held: back past both loads (empty again), the sound untouched", seq_is_empty(t) && same_sound(t, &before) &&
                  t->p[P_SLEN] == before.p[P_SLEN]);
     hold(B_SAVE);                                 /* redo */
-    t->step[3].note[0] = 70;                      /* an edit: the user's steps now */
-    t->step[3].n = 1;
-    t->step[3].time = ST_NOTE;
+    st_set(t, 3, (step_t){{70}, 1, ST_NOTE, 0, 96});   /* an edit: the user's steps now */
     press(B_OCTUP);
     bad += check("edited steps: the REPLACE T1 SEQUENCE? dialog", ui.confirm == CF_LOAD_PAT && ui.confirm_trk == 0u &&
-                 t->step[3].note[0] == 70);
+                 (*st_of(t, 3)).note[0] == 70);
     press(B_OCTDN);
-    bad += check("OCT- keeps them", ui.confirm == CF_NONE && t->step[3].note[0] == 70);
+    bad += check("OCT- keeps them", ui.confirm == CF_NONE && (*st_of(t, 3)).note[0] == 70);
     my_steps(t);
     before = *t;
     turn(EN_K1, 9);                               /* 12 BEAT */
@@ -539,7 +542,7 @@ static int test_patterns(void)
     bad += check("OCT+ loads (12 BEAT), then HOLD SAVE: UNDO", ui.confirm == CF_NONE && steps_are(t, 11) &&
                  msg_is("LOADED 12 BEAT") && str_eq(ui.msg2, "[SAVE] HOLD TO UNDO"));
     hold(B_SAVE);
-    bad += check("SAVE held: the user's steps and LEN back", !memcmp(t->step, before.step, sizeof t->step) && t->p[P_SLEN] == 32);
+    bad += check("SAVE held: the user's steps and LEN back", !memcmp(&t->pat, &before.pat, sizeof(pat_t)) && t->p[P_SLEN] == 32);
     /* a user preset's pattern: listed after the factory ones as U06, with its LEN DIV SWING GATE */
     t->p[P_SDIV] = 2;
     t->p[P_SSWING] = 40;
@@ -552,8 +555,8 @@ static int test_patterns(void)
     track_defaults_steps(t);
     turn(EN_K1, 20);                              /* (to the end of the list) */
     press(B_OCTUP);
-    bad += check("LOAD U06: its 16 steps, LEN 16 (at most), DIV and SWING", msg_is("LOADED U06 UPAT") && t->step[0].note[0] == 40 &&
-                 t->step[3].note[0] == 43 && !t->step[30].n && t->p[P_SLEN] == 16 && t->p[P_SDIV] == 2 && t->p[P_SSWING] == 40);
+    bad += check("LOAD U06: its 16 steps, LEN 16 (at most), DIV and SWING", msg_is("LOADED U06 UPAT") && (*st_of(t, 0)).note[0] == 40 &&
+                 (*st_of(t, 3)).note[0] == 43 && !(*st_of(t, 30)).n && t->p[P_SLEN] == 16 && t->p[P_SDIV] == 2 && t->p[P_SSWING] == 40);
     /* a project's steps count as the user's */
     project_save(2);
     project_load(2);
@@ -609,13 +612,18 @@ static int test_rec(void)
     frame();
     fm1_in.notes = 0;
     frame();
-    bad += check("STEP, armed and playing: a key does not write the cursor step", !trk[0].step[0].n && ui.cursor == 0);
+    bad += check("STEP, armed and playing: a key does not write the cursor step", !(*st_of(&trk[0], 0)).n && ui.cursor == 0);
     song.rec = 0;
     fm1_in.notes = host_notes = 1u << 7;
     frame();
     fm1_in.notes = 0;
     frame();
-    bad += check("STEP, not armed: the key writes the cursor step (and moves on)", trk[0].step[0].n == 1 && ui.cursor == 1);
+    bad += check("STEP, not armed: the key writes its note at the cursor (the cursor stays)", (*st_of(&trk[0], 0)).n == 1 && ui.cursor == 0);
+    fm1_in.notes = host_notes = 1u << 7;
+    frame();
+    fm1_in.notes = 0;
+    frame();
+    bad += check("  the same key again deletes it", !trk[0].pat.n && ui.cursor == 0);
     /* ARP: the arp's notes are recorded, not the key */
     ui_power_on();
     {
@@ -629,12 +637,12 @@ static int test_rec(void)
         song.playing = 1;
         input_on(t, 60, 100);
         for (i = 0; i < NSTEP; i++)
-            n += t->step[i].n;
+            n += (*st_of(t, i)).n;
         bad += check("ARP on: the key held is not recorded", n == 0);
         arp_tick(t, 1);
         for (i = 0; i < NSTEP; i++)
-            if (t->step[i].n)
-                notes = t->step[i].note[0];
+            if ((*st_of(t, i)).n)
+                notes = (*st_of(t, i)).note[0];
         bad += check("ARP on: the note the arp plays is recorded", notes == 60u);
         t->p[P_AMODE] = 0;
         input_off(t, 60);
@@ -961,7 +969,7 @@ static int test_tracks(void)
     before = trk[0];
     turn(EN_PRESET, 1);
     bad += check("#94 MIXER: the PRESETS knob loads the next sound; the steps and the mix stay",
-                 trk[0].preset != before.preset && !memcmp(trk[0].step, before.step, sizeof before.step) &&
+                 trk[0].preset != before.preset && !memcmp(&trk[0].pat, &before.pat, sizeof(pat_t)) &&
                  trk[0].p[P_LEVEL] == before.p[P_LEVEL] && cur_page()->graph == GR_TRK);
     hold(B_SAVE);
     bad += check("#94 MIXER: SAVE held undoes it", trk[0].preset == before.preset && !memcmp(trk[0].p, before.p, sizeof before.p));
@@ -995,190 +1003,176 @@ static void tap_key(uint32_t k)                   /* a key down for a frame, the
     fm1_in.notes &= ~(1u << k);
     frame();
 }
-static uint32_t lane_steps(const track_t *t, uint32_t l)   /* bit i: lane l strikes at step i (0..31) */
+static uint32_t row_steps(const track_t *t, uint32_t row)   /* bit i: a note of row `row` at step i (0..31) */
 {
     uint32_t i, m = 0;
     for (i = 0; i < 32u; i++)
-        m |= ((step_lanes(&t->step[i]) >> l) & 1u) << i;
+        m |= (uint32_t)(pat_find(&t->pat, row, i) >= 0) << i;
     return m;
 }
 
+/* CESARI: the grid of a kit track, on notes (the 606: rows BD SD CH OH CP LT HT CY) */
 static int test_grid(void)
 {
     int bad = 0;
     track_t *t = &trk[0];
     uint32_t i, k, leds, ok;
+    int32_t j;
     ui_power_on();
-    set_engine_of(t, ENGI_DRUM);
+    set_engine_of(t, ENGI_606);
     t->engine = t->eng_req;
+    track_defaults_steps(t);
     open_family(FAM_SEQ);
     frame();
-    bad += check("SEQ > STEP on a DRUM track is the grid (keys to the UI), GRID in the footer", grid_on() && song.grid == 1u &&
+    bad += check("SEQ > STEP on a kit track is the grid (keys to the UI), GRID in the footer", grid_on() && song.grid == 1u &&
                  cur_page()->scope == SC_STEP);
-    bad += check("the lanes: KICK SNARE CLAP HATCL HATOP TOM RIM BELL on GM 36 38 39 42 46 45 37 56",
-                 str_eq(drum_lane_name(t, 0), "KICK") && str_eq(drum_lane_name(t, 7), "BELL") && DRUM_LANE_NOTE[3] == 42 &&
-                 DRUM_LANE_NOTE[6] == 37 && drum_lane(41) == DV_TOM && drum_lane(49) == DV_BELL && drum_lane(35) == DV_KICK);
+    bad += check("the rows top down: the kit's order (606: BD SD CH OH CP ..)", grid_rows(t) == 8u &&
+                 grid_lane_of(note_kit(t), 2) == D6_CH && lane_row(note_kit(t), grid_lane_of(note_kit(t), 4)) == 39u);
     tap_key(key_at(1, 1));
-    bad += check("black key 2: lane 2 (SNARE) selected", ui.lane == 1u);
+    bad += check("black key 2: row 2 (SD) selected", ui.lane == 1u && grid_note_row(t) == 38u);
     tap_key(key_at(0, 4));
-    bad += check("white key 5: SNARE on step 5, the cursor there", t->step[4].hit == 1u << DV_SNARE && t->step[4].time == ST_NOTE &&
-                 !t->step[4].n && ui.cursor == 4u);
+    j = pat_find(&t->pat, 38, 4);
+    bad += check("white key 5: a snare note on step 5 (velocity 100, one step), the cursor there",
+                 j >= 0 && t->pat.note[j].vel == 100u && t->pat.note[j].len == 1u && t->pat.n == 1u && ui.cursor == 4u);
     leds = grid_leds();
-    bad += check("LEDs: white key 5 lit, black key 2 lit, ACC and the page keys dark (LEN 16)",
+    bad += check("LEDs: white key 5 lit, black key 2 lit, the page keys dark (LEN 16)",
                  (leds >> key_at(0, 4) & 1u) && (leds >> key_at(1, 1) & 1u) && !(leds >> key_at(0, 3) & 1u) &&
-                 !(leds >> key_at(1, 0) & 1u) && !(leds >> key_at(1, GK_ACC) & 1u) && !(leds >> key_at(1, GK_PGUP) & 1u));
+                 !(leds >> key_at(1, 0) & 1u) && !(leds >> key_at(1, GK_PGUP) & 1u));
     song.playing = 1;
-    t->seq_idx = 4;
+    t->seq_count = 4;
     leds = grid_leds();
     ok = !(leds >> key_at(0, 4) & 1u);
-    t->seq_idx = 6;
+    t->seq_count = 6;
     leds = grid_leds();
-    ok &= (leds >> key_at(0, 6) & 1u) && !(leds >> key_at(0, 4) & 1u) == 0u;
+    ok &= (leds >> key_at(0, 6) & 1u) && (leds >> key_at(0, 4) & 1u);
     song.playing = 0;
-    bad += check("LEDs: the step playing inverted (a hit goes dark, an empty step lights)", ok);
+    t->seq_count = 0;
+    bad += check("LEDs: the step playing inverted (a note goes dark, an empty step lights)", ok);
     tap_key(key_at(0, 4));
-    bad += check("white key 5 again: off, an empty step (REST)", !t->step[4].hit && t->step[4].time == ST_REST);
-    /* ACC held: the white keys set accents, their LEDs show them */
-    fm1_in.notes |= 1u << key_at(1, GK_ACC);
-    frame();
-    tap_key(key_at(0, 0));
-    fm1_in.notes |= 1u << key_at(1, GK_ACC);
-    leds = grid_leds();
-    ok = t->step[0].hit == 1u << DV_SNARE && t->step[0].acc == 1u << DV_SNARE && (leds >> key_at(0, 0) & 1u) &&
-         (leds >> key_at(1, GK_ACC) & 1u);
-    tap_key(key_at(0, 0));
-    fm1_in.notes |= 1u << key_at(1, GK_ACC);
-    leds = grid_leds();
-    ok &= t->step[0].hit == 1u << DV_SNARE && !t->step[0].acc && !(leds >> key_at(0, 0) & 1u);
-    fm1_in.notes = 0;
-    frame();
-    leds = grid_leds();
-    ok &= (leds >> key_at(0, 0) & 1u) != 0u;
-    bad += check("ACC held: a tap adds the hit accented, again drops the accent only; the LEDs show accents", ok);
-    /* CESARI: PRESETS the cursor, ALGORITHM the lane, SELECT the hit; the knobs ACC VEL CHANCE LEN */
+    bad += check("white key 5 again: the note deleted", !t->pat.n);
+    cursor_set(0);
+    /* PRESETS the cursor, ALGORITHM the row; KNOB 1 NUDGE, 2 VEL, 3 CHANCE of the note there, 4 the drum's LEN */
     turn(EN_PRESET, 2);
     turn(EN_ALGO, 1);
-    turn(EN_K1, 1);
-    ok = ui.cursor == 2u && ui.lane == 2u && !t->step[2].hit && song.sel == 0u;
+    ok = ui.cursor == 2u && ui.lane == 2u && song.sel == 0u;
     turn(EN_SELECT, 1);
-    ok &= song.g[G_BPM] == 121;
+    ok &= song.g[G_BPM] == 121 && !t->pat.n;
     song.g[G_BPM] = 120;
     tap_key(key_at(0, 2));
-    ok &= t->step[2].hit == 1u << DV_CLAP;
-    bad += check("grid: PRESETS the cursor, ALGORITHM the lane, KNOB 1 nothing; SELECT the tempo; a white key the hit", ok);
+    ok &= pat_find(&t->pat, 42, 2) >= 0;
+    bad += check("grid: PRESETS the cursor, ALGORITHM the row (CH); SELECT the tempo; a white key the note", ok);
+    turn(EN_K1, 3);
     turn(EN_K2, 5);
     turn(EN_K3, -2);
+    j = pat_find(&t->pat, 42, 2);
+    ok = j >= 0 && t->pat.note[j].nudge == 3 && t->pat.note[j].vel == 105u && t->pat.note[j].chance == 8u;
+    turn(EN_K3, 3);
+    ok &= t->pat.note[j].chance == NOTE_CH_COND;          /* (90 %, 100 %, then 1:2) */
+    {
+        char b[8];
+        const char *u;
+        chance_label(t->pat.note[j].chance, b, &u);
+        ok &= str_eq(b, "1:2") && !u[0];
+    }
+    bad += check("grid: KNOB 1 the note's NUDGE, 2 its VEL, 3 its CHANCE (80 %; past 100 % the loop conditions 1:2 ..)", ok);
     turn(EN_K4, 4);
-    ok = t->step[2].vel == 101u && step_chance(&t->step[2]) == 80u && t->p[P_SLEN] == 20;
-    turn(EN_K4, -4);
-    bad += check("grid: KNOB 2 the step's VEL, 3 its CHANCE (10 % a detent), 4 the pattern's LEN", ok && t->p[P_SLEN] == 16);
-    t->step[2] = (step_t){{0}, 0, ST_REST, 0, 0, 0, 0, 0};
-    ui.cursor = 3u;
-    /* pages: LEN 32, the page keys */
-    t->p[P_SLEN] = 32;
+    ok = t->pat.lane_len[D6_CH] == 20u && grid_len(t) == 20u && !t->pat.lane_len[D6_SD] && t->p[P_SLEN] == 16;
+    turn(EN_K4, -8);
+    ok &= grid_len(t) == 12u;
+    tap_key(key_at(0, 13));
+    ok &= pat_find(&t->pat, 42, 13) < 0;
+    tap_key(key_at(0, 11));
+    ok &= pat_find(&t->pat, 42, 11) >= 0;
+    bad += check("grid: KNOB 4 the drum's own LEN (CH 20, then 12: no step 14 there), the others the pattern's", ok);
+    /* pages: LEN 32 (the drum's), the page keys */
+    t->pat.lane_len[D6_CH] = 32;
+    cursor_set(3);
     leds = grid_leds();
     tap_key(key_at(1, GK_PGUP));
     ok = ui.bank == 1u && ui.cursor == 19u && (leds >> key_at(1, GK_PGUP) & 1u) && (leds >> key_at(1, GK_PGDN) & 1u);
     tap_key(key_at(0, 15));
-    ok &= t->step[31].hit == 1u << DV_CLAP;
+    ok &= pat_find(&t->pat, 42, 31) >= 0;
     tap_key(key_at(1, GK_PGDN));
     ok &= ui.bank == 0u && ui.cursor == 15u;
-    t->p[P_SLEN] = 12;
-    frame();
-    tap_key(key_at(0, 13));
-    ok &= !t->step[13].hit && !t->step[13].n;
-    bad += check("pages: black keys 11 / 10 up / down (the cursor along); past LEN a key does nothing", ok);
-    t->p[P_SLEN] = 16;
-    /* a step's GM notes on their lanes */
-    t->step[8] = (step_t){{41, 49, 36, 0}, 3, ST_NOTE, SF_ACCENT, 96, 0, 0};
-    ok = step_lanes(&t->step[8]) == ((1u << DV_TOM) | (1u << DV_BELL) | (1u << DV_KICK)) &&
-         step_accents(&t->step[8]) == step_lanes(&t->step[8]);
-    grid_hit(t, 8, DV_TOM, 0);
-    ok &= t->step[8].n == 1 && t->step[8].note[0] == 49 && t->step[8].hit == 1u << DV_KICK && (t->step[8].flags & SF_ACCENT);
-    grid_acc(t, 8, DV_KICK, 0);
-    ok &= !t->step[8].acc && !(t->step[8].flags & SF_ACCENT) && t->step[8].n == 1 && (step_lanes(&t->step[8]) >> DV_BELL & 1u);
-    grid_acc(t, 8, DV_BELL, 1);
-    ok &= !t->step[8].n && t->step[8].hit == ((1u << DV_KICK) | (1u << DV_BELL)) && t->step[8].acc == 1u << DV_BELL;
-    bad += check("GM notes on the grid: a low tom / crash on their lanes; an edit makes the lane its hit", ok);
-    /* the keys in the audio ISR: on the grid only the lane keys play */
+    bad += check("pages: black keys 11 / 10 up / down (the cursor along)", ok);
+    t->pat.lane_len[D6_CH] = 0;
+    /* the keys in the audio ISR: on the grid only the row keys play */
     kb_prev = 0;
-    fm1_in.notes = (1u << key_at(0, 3)) | (1u << key_at(1, 3)) | (1u << key_at(1, GK_ACC));
+    fm1_in.notes = (1u << key_at(0, 3)) | (1u << key_at(1, 3)) | (1u << key_at(1, 9));
     keyboard_block();
-    ok = kb_note[key_at(0, 3)] == KB_SILENT && kb_note[key_at(1, 3)] == 42u && kb_note[key_at(1, GK_ACC)] == KB_SILENT;
+    ok = kb_note[key_at(0, 3)] == KB_SILENT && kb_note[key_at(1, 3)] == 46u && kb_note[key_at(1, 9)] == KB_SILENT;
     fm1_in.notes = 0;
     keyboard_block();
-    bad += check("grid keys in the ISR: white keys and ACC silent, black key 4 plays HAT CL (42)", ok);
-    /* live recording on the grid: armed and playing, a lane key records its hit at the play head */
+    bad += check("grid keys in the ISR: white keys and the page keys silent, black key 4 plays row 4 (OH, 46)", ok);
+    /* live recording on the grid: armed and playing, a row key records its note at the play head */
     track_defaults_steps(t);
     song.rec = 1;
     song.playing = 1;
-    t->seq_idx = 5;
+    t->seq_count = 5;
     t->seq_pos = 0;
     fm1_in.notes = 1u << key_at(1, 4);
     keyboard_block();
     fm1_in.notes = 0;
     keyboard_block();
-    ok = t->step[5].hit == 1u << DV_HATO && !t->step[5].n && t->rskip_n == 0u;
+    ok = pat_find(&t->pat, 39, 5) >= 0 && t->rskip_n == 0u;
     t->seq_pos = step_samples(t, div_samples((uint32_t)t->p[P_SDIV]), 5) - 10u;   /* late in step 6: into step 7 */
     fm1_in.notes = 1u << key_at(1, 0);
     keyboard_block();
-    ok &= t->step[6].hit == 1u << DV_KICK && t->rskip_n == 1u && t->rskip[0] == 36u;
-    rec_hold(t, 7, 16);
+    ok &= pat_find(&t->pat, 36, 6) >= 0 && t->rskip_n == 1u && t->rskip[0] == 36u && t->rskip_at == 6u;
     fm1_in.notes = 0;
     keyboard_block();
-    ok &= t->step[7].time == ST_REST && !t->rh_n;
-    bad += check("REC on the grid: lane keys record hits, quantised (the next step late), no TIE holds", ok);
-    /* live recording elsewhere (HOME): the GM keys; a lane's note a hit, another GM drum a note */
+    ok &= t->pat.note[pat_find(&t->pat, 36, 6)].len == 1u && !t->rh_n;
+    bad += check("REC on the grid: row keys record notes, quantised (the next step late), one step long", ok);
+    /* live recording elsewhere (HOME): the kit's keys */
     go_home();
     frame();
-    t->seq_idx = 9;
+    t->seq_count = 9;
     t->seq_pos = 0;
-    fm1_in.notes = (1u << 7) | (1u << 13) | (1u << 6);   /* C 36 KICK, F# 42 HAT CL, E 35 (a kick 2 st down) */
+    fm1_in.notes = (1u << 7) | (1u << 8);              /* the first two drums: BD 36, SD 38 */
     keyboard_block();
     fm1_in.notes = 0;
     keyboard_block();
-    ok = !song.grid && t->step[9].hit == ((1u << DV_KICK) | (1u << DV_HATC)) && t->step[9].n == 1 && t->step[9].note[0] == 35 &&
-         step_lanes(&t->step[9]) == ((1u << DV_KICK) | (1u << DV_HATC));
+    ok = !song.grid && pat_find(&t->pat, 36, 9) >= 0 && pat_find(&t->pat, 38, 9) >= 0;
     song.rec = 0;
     song.playing = 0;
-    bad += check("REC on HOME: GM keys quantised into the grid (35 a note on the KICK lane)", ok);
-    /* SEQ > PATTERNS: 12 BEAT into the DRUM track fills the grid */
+    t->seq_count = 0;
+    bad += check("REC on HOME: the kit's keys quantised into notes", ok);
+    /* SEQ > PATTERNS: 12 BEAT into the kit track */
     track_defaults_steps(t);
     pat_sig[0] = steps_sig(t);
     go_page(GR_PATS);
     ui.ppick = 11;
     press(B_OCTUP);
-    ok = msg_is("LOADED 12 BEAT") && t->p[P_SLEN] == 16 && lane_steps(t, DV_KICK) == ((1u << 0) | (1u << 6) | (1u << 8) | (1u << 11)) &&
-         lane_steps(t, DV_SNARE) == ((1u << 4) | (1u << 12)) && lane_steps(t, DV_HATO) == 1u << 14 &&
-         lane_steps(t, DV_HATC) == 0xA6AEu && t->step[0].acc == 1u << DV_KICK && t->step[4].acc == 1u << DV_SNARE &&
-         t->step[1].acc == 0u && t->step[16].time == ST_REST;
-    for (i = 0; i < 16u; i++)
-        ok &= t->step[i].n == 0u && !(t->step[i].flags & SF_ACCENT);
-    bad += check("PATTERNS 12 BEAT into a DRUM track: the grid (hits, the accents on 1 5 9 13)", ok);
+    ok = msg_is("LOADED 12 BEAT") && t->p[P_SLEN] == 16 && row_steps(t, 36) == ((1u << 0) | (1u << 6) | (1u << 8) | (1u << 11)) &&
+         row_steps(t, 38) == ((1u << 4) | (1u << 12)) && row_steps(t, 46) == 1u << 14 && row_steps(t, 42) == 0xA6AEu &&
+         t->pat.note[pat_find(&t->pat, 36, 0)].vel == 127u && t->pat.note[pat_find(&t->pat, 38, 4)].vel == 127u &&
+         t->pat.note[pat_find(&t->pat, 42, 1)].vel == 96u;
+    bad += check("PATTERNS 12 BEAT into a kit track: its notes (the accents velocity 127)", ok);
     open_family(FAM_SEQ);
-    ui.lane = DV_KICK;
+    ui.lane = 0;
     cursor_set(0);
     leds = grid_leds();
     ok = 1;
     for (i = 0; i < 16u; i++)
         ok &= (leds >> key_at(0, i) & 1u) == ((0x0941u >> i) & 1u);
-    bad += check("..its KICK lane on the white key LEDs (1 7 9 12)", ok);
-    {   /* the sound changes, the grid stays and plays as GM notes on another engine */
-        step_t keep[NSTEP];
-        memcpy(keep, t->step, sizeof keep);
+    bad += check("..its KICK row on the white key LEDs (1 7 9 12)", ok);
+    {   /* the sound changes, the notes stay and play as GM notes on another engine */
+        static pat_t keep;
+        keep = t->pat;
         go_home();
         turn(EN_PRESET, 1);
         set_engine_of(t, 0);
         t->engine = t->eng_req;
-        ok = !memcmp(keep, t->step, sizeof keep) && !grid_on();
-        t->seq_hold = 0;
-        t->seq_n = 0;
-        seq_step(t, &t->step[0], div_samples((uint32_t)t->p[P_SDIV]), 0);
-        ok &= t->seq_n == 1u && t->seq_notes[0] == 36u;
+        ok = !memcmp(&keep, &t->pat, sizeof keep) && !grid_on();
+        t->seq_ev_n = 0;
+        t->seq_count = 0;
+        seq_enter(t, div_samples((uint32_t)t->p[P_SDIV]));
+        ok &= t->seq_ev_n == 1u && t->seq_ev[0].row == 36u;
+        t->seq_ev_n = 0;
         seq_release(t);
-        bad += check("a sound load keeps the grid; on ANALOG its hits play as their GM notes", ok);
-        hold(B_SAVE);                             /* undo the sound loads: DRUM again */
-        set_engine_of(t, ENGI_DRUM);
+        bad += check("a sound load keeps the notes; on ANALOG the kick plays as its GM note", ok);
+        hold(B_SAVE);                             /* undo the sound loads: the 606 again */
+        set_engine_of(t, ENGI_606);
         t->engine = t->eng_req;
     }
     my_steps(t);
@@ -1187,8 +1181,8 @@ static int test_grid(void)
     press(B_OCTUP);
     press(B_OCTUP);
     hold(B_SAVE);
-    bad += check("BEAT over the user's steps: the dialog, then SAVE held brings them back", t->step[0].note[0] == 40 &&
-                 !t->step[0].hit && t->p[P_SLEN] == 32);
+    bad += check("BEAT over the user's notes: the dialog, then SAVE held brings them back",
+                 pat_find(&t->pat, 40, 0) >= 0 && pat_find(&t->pat, 36, 0) < 0 && t->p[P_SLEN] == 32);
     /* the menu: the keys play again */
     go_page(GR_ROLL);
     frame();
@@ -1243,7 +1237,7 @@ static int test_favorites(void)
                  favorite_has(ENGI_PHYS, 0) && !memcmp(TSEL, &before, sizeof before));
     turn(EN_PRESET, 1);
     bad += check("filtered browsing crosses DRUM and synth sounds while retaining the track's pattern and ARP",
-                 TSEL->eng_req == 0 && preset_favorite() && !memcmp(TSEL->step, before.step, sizeof before.step) &&
+                 TSEL->eng_req == 0 && preset_favorite() && !memcmp(&TSEL->pat, &before.pat, sizeof(pat_t)) &&
                  TSEL->p[P_AMODE] == 2);
     turn(EN_K3, -1);
     pos = preset_pos(&total);
@@ -1961,7 +1955,7 @@ static int test_chain(void)
 {
     uint32_t i, k, period, last, n = 32u;
     int bad = 0, ok;
-    step_t before[NTRK][NSTEP];
+    static pat_t before[NTRK];
     int16_t timing[NTRK][4], sounds[NTRK][P_COUNT];
     ui_power_on();
     bad += check("SONG empty: PLAY does not start", chain_prepare() == 1 && !transport_req);
@@ -1969,14 +1963,14 @@ static int test_chain(void)
         for (i = 0; i < NTRK; i++) {
             track_defaults_steps(&trk[i]);
             trk[i].p[P_SLEN] = (int16_t)(2u + k);
-            trk[i].step[0] = (step_t){{(uint8_t)(60u + 5u * k), 0, 0, 0}, 1, ST_NOTE, 0, 96, 0, 0};
+            st_set(&trk[i], 0, (step_t){{(uint8_t)(60u + 5u * k), 0, 0, 0}, 1, ST_NOTE, 0, 96, 0, 0});
         }
         project_save(k);
     }
     for (i = 0; i < NTRK; i++) {
         my_steps(&trk[i]);
         trk[i].p[P_SLEN] = 9;
-        memcpy(before[i], trk[i].step, sizeof before[i]);
+        before[i] = trk[i].pat;
         memcpy(timing[i], &trk[i].p[P_SLEN], sizeof timing[i]);
         memcpy(sounds[i], trk[i].p, sizeof sounds[i]);
     }
@@ -1984,7 +1978,7 @@ static int test_chain(void)
     chain_config.row[0] = (chain_row_t){0, 2};
     chain_config.row[1] = (chain_row_t){3, 1};
     bad += check("SONG missing source: refuses before changing any track", chain_prepare() == 6 && !chain.armed &&
-        !memcmp(trk[0].step, before[0], sizeof before[0]));
+        !memcmp(&trk[0].pat, &before[0], sizeof(pat_t)));
     chain_config.row[1].slot = 1;
     project_save(2);
     chain_defaults(&chain_config);
@@ -1995,7 +1989,7 @@ static int test_chain(void)
     bad += check("SONG prepares while stopped, no starts over a pending start", chain_prepare() == 0 && chain_prepare() == 2);
     events_block(n);
     bad += check("SONG starts all tracks at source step 0, recording paused", chain.running && song.playing &&
-        !song.rec && trk[0].seq_idx == 0 && seq_steps(&trk[0])[0].note[0] == 60 && trk[0].seq_notes[0] == 60);
+        !song.rec && trk[0].seq_idx == 0 && pat_find(seq_pat(&trk[0]), 60, 0) >= 0 && trk[0].seq_on_n == 1u && trk[0].seq_on[0].row == 60u);
     period = div_samples((uint32_t)trk[0].p[P_SDIV]);
     events_block(period);
     events_block(period);
@@ -2004,7 +1998,7 @@ static int test_chain(void)
     events_block(period);
     ok = chain.row == 1 && chain.remaining == 1;
     for (i = 0; i < NTRK; i++) {
-        ok &= trk[i].seq_idx == 0 && trk[i].p[P_SLEN] == 3 && seq_steps(&trk[i])[0].note[0] == 65;
+        ok &= trk[i].seq_idx == 0 && trk[i].p[P_SLEN] == 3 && pat_find(seq_pat(&trk[i]), 65, 0) >= 0;
         for (k = 0; k < P_COUNT; k++)
             if (k < P_SLEN || k > P_SGATE) ok &= trk[i].p[k] == sounds[i][k];
     }
@@ -2012,18 +2006,18 @@ static int test_chain(void)
     open_family(FAM_SEQ);
     for (k = 0; k < NPAGES && cur_page()->scope != SC_STEP; k++) open_family(FAM_SEQ);
     turn(EN_K2, 1); press(B_EDIT); hold(B_REC); hold(B_SAVE);
-    bad += check("SONG playing: step edits, clears, recording and undo are blocked", !memcmp(trk[0].step, before[0], sizeof before[0]) && !ui.confirm);
+    bad += check("SONG playing: step edits, clears, recording and undo are blocked", !memcmp(&trk[0].pat, &before[0], sizeof(pat_t)) && !ui.confirm);
     events_block(period);
     events_block(period);
     events_block(period);
     ok = !song.playing && !chain.running && song.rec == 3;
-    for (i = 0; i < NTRK; i++) ok &= !trk[i].seq_n && !memcmp(trk[i].step, before[i], sizeof before[i]) &&
+    for (i = 0; i < NTRK; i++) ok &= !trk[i].seq_on_n && !memcmp(&trk[i].pat, &before[i], sizeof(pat_t)) &&
         !memcmp(&trk[i].p[P_SLEN], timing[i], sizeof timing[i]);
     bad += check("SONG end: stops and restores editable patterns, timing and record arms", ok);
     bad += check("SONG source projects stay unchanged", project_used(0) && project_used(1) && stored_note(0, 0, 0) == 60);
     chain_config.row[0].repeat = 1;
     chain_prepare(); events_block(n);
-    trk[0].seq_idx = 1;
+    trk[0].seq_idx = 1; trk[0].seq_count = 1;
     last = step_samples(&trk[0], div_samples((uint32_t)trk[0].p[P_SDIV]), 1);
     trk[0].seq_pos = last - n + 19u;
     events_block(n);
@@ -2031,11 +2025,11 @@ static int test_chain(void)
     for (i = 0; i < NTRK; i++) ok &= trk[i].seq_pos == 19u && trk[i].seq_idx == 0;
     bad += check("SONG transition preserves fractional block time on all tracks", ok);
     transport_req = 2; events_block(n);
-    bad += check("SONG manual STOP restores the previous pattern", !chain.running && !song.playing && !memcmp(trk[0].step, before[0], sizeof before[0]));
+    bad += check("SONG manual STOP restores the previous pattern", !chain.running && !song.playing && !memcmp(&trk[0].pat, &before[0], sizeof(pat_t)));
     chain_prepare(); events_block(n);
     project_load(0);
     bad += check("PROJECT load during SONG stops it before loading new timing", !chain.running && !song.playing &&
-        trk[0].p[P_SLEN] == 2 && trk[0].step[0].note[0] == 60 && !chain_config.count);
+        trk[0].p[P_SLEN] == 2 && (*st_of(&trk[0], 0)).note[0] == 60 && !chain_config.count);
     ui_power_on();
     open_family(FAM_SEQ);
     for (k = 0; k < NPAGES && cur_page()->graph != GR_SONG; k++) open_family(FAM_SEQ);
@@ -2082,12 +2076,12 @@ static int test_chain(void)
  * an empty pattern says NOTHING TO CLEAR; a song playing STOP TO EDIT */
 static int test_rec_hold_clear(void)
 {
-    static const uint8_t SEQ_G[3] = {GR_ROLL, GR_STEPS, GR_CHANCE};
+    static const uint8_t SEQ_G[2] = {GR_ROLL, GR_STEPS};   /* (CESARI: no CHANCE page) */
     static const uint8_t ELSE_G[4] = {GR_PATS, GR_SONG, GR_MOTION, GR_ADSR};
     int bad = 0, ok = 1;
     uint32_t k;
-    step_t before[NSTEP];
-    for (k = 0; k < 3u; k++) {
+    static pat_t before;
+    for (k = 0; k < 2u; k++) {
         ui_power_on();
         song.sel = 1;
         my_steps(&trk[1]);
@@ -2096,16 +2090,16 @@ static int test_rec_hold_clear(void)
         hold(B_REC);
         ok &= ui.confirm == CF_CLEAR_SEQ && ui.confirm_trk == 1u && song.rec == 0u && !transport_req;
     }
-    bad += check("#91 REC held on STEP, PATTERN, CHANCE: CLEAR T2 SEQUENCE?, nothing armed or started", ok);
-    memcpy(before, trk[1].step, sizeof before);
+    bad += check("#91 REC held on STEP, PATTERN: CLEAR T2 SEQUENCE?, nothing armed or started", ok);
+    before = trk[1].pat;
     press(B_OCTDN);
-    bad += check("#91 OCT- cancels: the steps stay", !ui.confirm && !memcmp(trk[1].step, before, sizeof before));
+    bad += check("#91 OCT- cancels: the steps stay", !ui.confirm && !memcmp(&trk[1].pat, &before, sizeof before));
     hold(B_REC);
     press(B_OCTUP);
     bad += check("#91 OCT+ clears the pattern", !ui.confirm && seq_is_empty(&trk[1]) && msg_is("PATTERN CLEARED") &&
                  song.rec == 0u);
     hold(B_SAVE);
-    bad += check("#91 SAVE held undoes the clear", !memcmp(trk[1].step, before, sizeof before));
+    bad += check("#91 SAVE held undoes the clear", !memcmp(&trk[1].pat, &before, sizeof before));
     ui_power_on();
     song.sel = 0;
     track_defaults_steps(&trk[0]);
@@ -2127,9 +2121,9 @@ static int test_rec_hold_clear(void)
     bad += check("#91 a tap after it disarms as before", song.rec == 0u && !ui.confirm);
     song.playing = 0;
     ui_power_on();
-    set_engine_of(TSEL, ENGI_DRUM);
+    set_engine_of(TSEL, ENGI_606);
     TSEL->engine = TSEL->eng_req;
-    TSEL->step[2] = (step_t){.hit = 1u << DV_KICK, .time = ST_NOTE};
+    st_set(TSEL, 2, (step_t){.hit = 1u << DV_KICK, .time = ST_NOTE});
     go_page(GR_ROLL);
     frame();
     ok = grid_on();
@@ -2176,7 +2170,7 @@ static int test_presets_knob(void)
         {
             int same_snd = TSEL->preset == before.preset && TSEL->eng_req == before.eng_req &&
                            !memcmp(TSEL->p, before.p, sizeof before.p);
-            int same_steps = !memcmp(TSEL->step, before.step, sizeof before.step);
+            int same_steps = !memcmp(&TSEL->pat, &before.pat, sizeof(pat_t));
             if (PAGES[i].fam == FAM_SEQ && (g == GR_ROLL || g == GR_STEPS || g == GR_CHANCE || g == GR_MOTION)) {
                 cur_ok &= ui.cursor == 1u && same_snd && same_steps && ui.page == i;
                 n_cur++;
@@ -2194,26 +2188,26 @@ static int test_presets_knob(void)
                 snd_ok &= !same_snd && same_steps && ui.page == i && !ui.home;
                 hold(B_SAVE);
                 undo_ok &= TSEL->preset == before.preset && TSEL->eng_req == before.eng_req &&
-                           !memcmp(TSEL->p, before.p, sizeof before.p) && !memcmp(TSEL->step, before.step, sizeof before.step);
+                           !memcmp(TSEL->p, before.p, sizeof before.p) && !memcmp(&TSEL->pat, &before.pat, sizeof(pat_t));
                 n_snd++;
             }
         }
     }
     bad += check("#92 PRESETS on STEP, PATTERN, CHANCE, AUTOMATION: the step cursor; the sound and the steps stay",
-                 cur_ok && n_cur == 4u);
+                 cur_ok && n_cur == 3u);   /* (CESARI: no CHANCE page) */
     bad += check("#94 PRESETS on USER, PROJECT, PHRASES, SONG: the selection (KNOB 1's); nothing loaded", sel_ok);
     bad += check("#94 PRESETS on TOOLS does nothing", tools_ok);
     bad += check("#94 PRESETS elsewhere (EDIT, ENV, LFO, FX, SCL, ARP, MIXER, GLOBAL, ...): the next sound, the steps stay",
                  snd_ok && n_snd >= 15u);
     bad += check("#94   SAVE held undoes each of those loads", undo_ok);
     ui_power_on();
-    set_engine_of(TSEL, ENGI_DRUM);
+    set_engine_of(TSEL, ENGI_606);
     TSEL->engine = TSEL->eng_req;
     TSEL->p[P_SLEN] = 32;
     go_page(GR_ROLL);
     frame();
     turn(EN_PRESET, 17);
-    grid_ok = grid_on() && ui.cursor == 17u && ui.bank == 1u && TSEL->eng_req == ENGI_DRUM;
+    grid_ok = grid_on() && ui.cursor == 17u && ui.bank == 1u && TSEL->eng_req == ENGI_606;
     turn(EN_PRESET, -18);
     grid_ok &= ui.cursor == 31u;
     bad += check("#92 the DRUM grid: PRESETS moves the cursor (and the page), as KNOB 1; wraps", grid_ok);
@@ -2280,11 +2274,13 @@ static int test_product_ux(void)
             ok &= !page_visible(i);
     bad += check("DIGITAL retired: engine 1 asked for loads FM6; the OP ENV / OP LEVEL pages never show", ok);
 #endif
-    ui_power_on(); go_page(GR_CHANCE); turn(EN_K2, -35);
-    bad += check("CHANCE is per step and starts at backward-compatible 100 percent", step_chance(&TSEL->step[0]) == 65 && step_chance(&TSEL->step[1]) == 100);
-    turn(EN_K2, -1000); ok = step_chance(&TSEL->step[0]) == 0;
-    turn(EN_K2, 1000); ok &= step_chance(&TSEL->step[0]) == 100;
-    bad += check("CHANCE controls clamp to 0..100 without changing adjacent steps", ok);
+    ui_power_on(); track_defaults_steps(TSEL); pat_add(&TSEL->pat, 60, 0, 1, 100); pat_add(&TSEL->pat, 62, 1, 1, 100);
+    go_page(GR_ROLL); cursor_set(0); turn(EN_K3, -3);
+    bad += check("CHANCE is a note's (STEP's KNOB 3) and starts at 100 percent", TSEL->pat.note[0].chance == 7u &&
+                 TSEL->pat.note[1].chance == 0u);
+    turn(EN_K3, -1000); ok = TSEL->pat.note[0].chance == 1u;
+    turn(EN_K3, 1000); ok &= TSEL->pat.note[0].chance == NOTE_CH_COND + NOTE_CONDS - 1u && !TSEL->pat.note[1].chance;
+    bad += check("CHANCE stops at 10 percent and at the last loop condition (4:4), the other notes untouched", ok);
     ui_power_on(); song.rec = 1; seq_start(); go_home();
     int16_t baseline = TSEL->p[P_E0]; turn(EN_K1, 1);
     bad += check("REC plus a sound knob records motion through the UI", motion_count(TSEL) == 1 && motion_enabled(TSEL));
@@ -2526,14 +2522,14 @@ static int test_layer(void)
     usb.config = 1; mo = mo_w;
     go_page(GR_ROLL); my_steps(TSEL); song.rec = 1; song.playing = 1;
     {
-        step_t before[NSTEP];
+        static pat_t before;
         uint32_t cur = ui.cursor;
-        memcpy(before, TSEL->step, sizeof before);
+        before = TSEL->pat;
         btn_down(B_FX); key_down(white(2)); frame();
         ok = ui.layer == LAYER_FX && !gates() && mo_w == mo && (kb_layer >> white(2)) & 1u &&
              (perf_held & PF_BIT(PF_R32));                    /* white key 3 (A3): REPEAT 1/32 */
         for (i = 0; i < 40u; i++) events_block(CTL);
-        ok &= !memcmp(before, TSEL->step, sizeof before) && ui.cursor == cur;
+        ok &= !memcmp(&before, &TSEL->pat, sizeof before) && ui.cursor == cur;
         bad += check("FX + a key: the map at once; no voice, no MIDI, no recording, no step written", ok);
         key_up(white(2)); frame();
         bad += check("  the key let go: its effect off, no note-off sent", !perf_held && !kb_layer && mo_w == mo);
@@ -2644,9 +2640,9 @@ static int test_layer(void)
     ui_power_on();
     go_page(GR_ROLL); my_steps(TSEL); ui.cursor = 0;
     btn_down(B_EDIT); frame();
-    ok = step_on(&TSEL->step[0]) && ui.cursor == 0;
+    ok = pat_step_on(&TSEL->pat, 0) && ui.cursor == 0;
     btn_up(B_EDIT); frame();
-    bad += check("EDIT on STEP clears the step when let go (not on press)", ok && !step_on(&TSEL->step[0]) && ui.cursor == 1);
+    bad += check("EDIT on STEP clears the step when let go (not on press)", ok && !pat_step_on(&TSEL->pat, 0) && ui.cursor == 1);
     ui_power_on(); hold(B_HOME);
     ok = ui.menu == 1; hold(B_HOME); ok &= !ui.menu;
     go_home(); hold(B_SEQ); ok &= cur_page()->graph == GR_SONG;
@@ -2791,11 +2787,11 @@ static int test_name(void)
     /* the keys never sound, record or send MIDI */
     usb.config = 1; mo = mo_w; song.rec = 1;
     {
-        step_t before[NSTEP];
-        memcpy(before, TSEL->step, sizeof before);
+        static pat_t before;
+        before = TSEL->pat;
         key_down(white(3)); key_down(nm_black_key(NB_SPACE, 0)); frame();
         for (i = 0; i < 8u; i++) events_block(CTL);
-        ok = !gates() && mo_w == mo && !memcmp(before, TSEL->step, sizeof before) && song.grid == 2u;
+        ok = !gates() && mo_w == mo && !memcmp(&before, &TSEL->pat, sizeof before) && song.grid == 2u;
         key_up(white(3)); key_up(nm_black_key(NB_SPACE, 0)); frame();
         bad += check("  keys in NAME: no voice, no MIDI, nothing recorded (seq.c: song.grid 2)", ok && mo_w == mo);
     }
@@ -3355,13 +3351,13 @@ static int test_quick_layers(void)
     ok &= TSEL->eng_req == ENGI_FM6;                    /* (G3: FM6, second in ENGINE_ORDER) */
     key_down(white(NENG_SHOWN - 1u)); key_up(white(NENG_SHOWN - 1u)); frame();
     ok &= TSEL->eng_req == eng_vis(NENG_SHOWN - 1u);    /* (the last key: the last engine shown) */
-    ok &= !memcmp(TSEL->step, before.step, sizeof before.step) && TSEL->p[P_SLEN] == before.p[P_SLEN] &&
+    ok &= !memcmp(&TSEL->pat, &before.pat, sizeof(pat_t)) && TSEL->p[P_SLEN] == before.p[P_SLEN] &&
           TSEL->p[P_SLCR] == SL_STUT;
     btn_up(B_EDIT); frame();
     bad += check("EDIT + white key n: the n-th engine shown (FM6 2nd, the last one last), while playing; steps, LEN, SLICER stay", ok);
     hold(B_SAVE);
     bad += check("  SAVE held: UNDO back to before the layer's loads, the steps untouched",
-                 TSEL->eng_req == 0u && TSEL->preset == before.preset && !memcmp(TSEL->step, before.step, sizeof before.step));
+                 TSEL->eng_req == 0u && TSEL->preset == before.preset && !memcmp(&TSEL->pat, &before.pat, sizeof(pat_t)));
     a = 0;
     ok = 1;
     btn_down(B_EDIT); frames(480);
@@ -3380,7 +3376,7 @@ static int test_quick_layers(void)
     turn(EN_K3, 1);
     ok &= preset_favorite();
     oct_back();
-    ok &= TSEL->eng_req == 0u && !memcmp(TSEL->step, before.step, sizeof before.step);
+    ok &= TSEL->eng_req == 0u && !memcmp(&TSEL->pat, &before.pat, sizeof(pat_t));
     btn_up(B_EDIT); frame();
     bad += check("  KNOB 2: the engine's next sound, KNOB 3 FAV; OCT-: the sound as the layer opened", ok && ui.home);
     btn_down(B_EDIT); frame(); turn(EN_K1, 1);
@@ -3554,31 +3550,10 @@ static int test_bughunt_ui(void)
                  ok && !ui.confirm && !up_used(1));
     turn(EN_K1 + 2, 1); press(B_OCTUP);
     bad += check("  an empty slot: no dialog, EMPTY SLOT", !ui.confirm && msg_is("EMPTY SLOT"));
-    {   /* 4: CHANCE is not STEP: no grid, no key entry, no EDIT clear (its knobs only) */
-        uint32_t before;
-        step_t s0;
-        ui_power_on();
-        track_select(3); frame();                       /* T4 DRUM */
-        go_page(GR_CHANCE); frame();
-        before = lane_steps(TSEL, ui.lane);
-        tap_key(white(2));
-        bad += check("CHANCE on a DRUM track: no grid (title, LEDs), a white key toggles no hit",
-                     drum_track(TSEL) && !grid_on() && !keys_mode() && lane_steps(TSEL, ui.lane) == before);
-        ui_power_on(); go_page(GR_CHANCE); frame();
-        my_steps(TSEL);
-        s0 = TSEL->step[0];
-        tap_key(white(5)); frame();
-        ok = !memcmp(&s0, &TSEL->step[0], sizeof s0) && ui.cursor == 0u;
-        press(B_EDIT);
-        ok &= !memcmp(&s0, &TSEL->step[0], sizeof s0) && !msg_is("STEP CLEARED");
-        ui_power_on(); go_page(GR_CHANCE); frame();
-        s0 = TSEL->step[0];
-        turn(EN_K2, -10);                               /* (100 % by default) */
-        bad += check("CHANCE on a melodic track: a key writes no step, EDIT clears none; KNOB 2 the chance",
-                     ok && step_chance(&TSEL->step[0]) != step_chance(&s0));
+    {   /* 4: (CESARI: no CHANCE page: chance is a note's, STEP's KNOB 3) */
         ui_power_on(); go_page(GR_ROLL); frame();
         tap_key(white(5)); frame();
-        bad += check("  STEP still: a key writes the cursor step", step_on(&TSEL->step[0]) || TSEL->step[0].n);
+        bad += check("  STEP: a key writes the cursor step", pat_step_on(&TSEL->pat, 0));
     }
     {   /* 5: ALGORITHM does nothing while a layer's button is held (as PRESETS); after it, the track again */
         int16_t r0;
@@ -3740,10 +3715,11 @@ static int pr_columns_match(const track_t *t, uint32_t *nbars)
     uint32_t i, r, j, len = (uint32_t)t->p[P_SLEN], base = ui.bank * 16u;
     int ok = 1;
     for (i = 0; i < 16u && base + i < len; i++) {
-        uint32_t want = 0, got = 0, s = pr_src(t, base + i, len);
-        for (j = 0; s < NSTEP && j < 4u + NLANE; j++) {
-            int32_t n = pr_note(&t->step[s], j), rr = (int32_t)proll.lo + PR_ROWS - 1 - n;
-            if (n >= 0 && rr >= 0 && rr < PR_ROWS) want |= 1u << rr;
+        uint32_t want = 0, got = 0, col = base + i;
+        for (j = 0; j < t->pat.n; j++) {               /* (CESARI: the notes sounding in the column) */
+            const note_t *n = &t->pat.note[j];
+            int32_t rr = (int32_t)proll.lo + PR_ROWS - 1 - n->row;
+            if (n->start <= col && col < (uint32_t)n->start + n->len && rr >= 0 && rr < PR_ROWS) want |= 1u << rr;
         }
         for (r = 0; r < PR_ROWS; r++)
             if (pr_is_bar((uint32_t)(PR_X0 + (int32_t)i * PR_CW + 6), Y_GRAPH + PR_Y0 + r * PR_RH + 2u)) got |= 1u << r;
@@ -3772,23 +3748,22 @@ static int test_piano_roll(void)
                  screen_gray());
     t->p[P_VOICE] = V_POLY;                                           /* chords: up to 4 bars in a column */
     for (i = 0; i < 16u; i += 4u) {
-        step_t *s = &t->step[i];
-        s->time = ST_NOTE; s->n = 4; s->note[0] = 57; s->note[1] = 60; s->note[2] = 64; s->note[3] = 67;
-        t->step[i + 1u].time = ST_TIE;
+        pat_del_step(&t->pat, i);
+        pat_del_step(&t->pat, i + 1u);
+        pat_add(&t->pat, 57, i, 2, 96); pat_add(&t->pat, 60, i, 2, 96); pat_add(&t->pat, 64, i, 2, 96); pat_add(&t->pat, 67, i, 2, 96);
     }
     nb = 0;
     memset(host_screen, 0, sizeof host_screen); ui.force = 1; ui_draw();
     bad += check("  4-note chords stacked, their ties carry all four", pr_columns_match(t, &nb));
-    for (i = 0; i < NSTEP; i++) {                                     /* LEN 32, page 2 */
-        step_clear(&t->step[i]);
-        if (i >= 16u && i % 2u == 0u) { t->step[i].time = ST_NOTE; t->step[i].n = 1; t->step[i].note[0] = (uint8_t)(72 + i % 7u); }
-    }
+    pat_clear(&t->pat);                                               /* LEN 32, page 2 */
+    for (i = 16; i < NSTEP; i += 2u)
+        pat_add(&t->pat, 72 + i % 7u, i, 1, 96);
     t->p[P_SLEN] = 32; cursor_set(18);
     nb = 0;
     memset(host_screen, 0, sizeof host_screen); ui.force = 1; ui_draw();
     bad += check("  LEN 32, the cursor on page 2: its 16 steps drawn", ui.bank == 1u && pr_columns_match(t, &nb) && nb == 8u);
     lo0 = proll.lo;                                                   /* two octaves up: the view follows in steps */
-    for (i = 16; i < 32u; i++) if (t->step[i].n) t->step[i].note[0] += 24;
+    for (i = 0; i < t->pat.n; i++) if (t->pat.note[i].start >= 16u && t->pat.note[i].start < 32u) t->pat.note[i].row += 24;
     for (i = 0; i < 20u && proll.lo != lo0 + 24u; i++) { frame(); steps++; }
     bad += check("  notes moved two octaves: the view follows over frames (not at once), then rests",
                  proll.lo == lo0 + 24u && steps >= 3u && steps < 20u);
@@ -3853,14 +3828,14 @@ static int test_bughunt_ui2(void)
                 ui_power_on(); t = TSEL; t->p[P_VOICE] = v ? V_MONO : V_POLY; t->p[P_CHRD] = CH_DIA3; t->p[P_SCALE] = 1;
                 track_defaults_steps(t); go_page(GR_ROLL); cursor_set(0); frame();
                 key_down(KEY[j]); frame();
-                e = t->step[0];
+                e = (*st_of(t, 0));
                 key_up(KEY[j]); frame();
                 ok &= e.n == (v ? 1u : 3u) && e.note[0] == 60u && (v || (e.note[1] == 64u && e.note[2] == 67u));
                 ui_power_on(); t = TSEL; t->p[P_VOICE] = v ? V_MONO : V_POLY; t->p[P_CHRD] = CH_DIA3; t->p[P_SCALE] = 1;
                 track_defaults_steps(t); go_home(); frame();
-                song.rec = 1; song.playing = 1; t->seq_idx = 3; t->seq_pos = 0;
+                song.rec = 1; song.playing = 1; t->seq_idx = 3; t->seq_count = 3; t->seq_pos = 0;
                 fm1_in.notes = 1u << KEY[j]; keyboard_block();
-                r = t->step[3];
+                r = (*st_of(t, 3));
                 fm1_in.notes = 0; keyboard_block();
                 song.rec = 0; song.playing = 0;
                 ok &= r.n == e.n && !memcmp(r.note, e.note, e.n);
@@ -3940,8 +3915,7 @@ static int test_bughunt_ui2(void)
             uint8_t lo = 0, hi = 127;
             ui_power_on(); t = TSEL; track_defaults_steps(t); t->p[P_SLEN] = 16;
             settings.palette = (uint8_t)p; palette_set(p);
-            t->step[0].time = t->step[5].time = ST_NOTE; t->step[0].n = t->step[5].n = 1;
-            t->step[0].note[0] = lo; t->step[5].note[0] = hi;
+            pat_add(&t->pat, lo, 0, 1, 96); pat_add(&t->pat, hi, 5, 1, 96);
             go_page(GR_ROLL); cursor_set(0); ui.force = 1; frame(); frame();
             bg = (uint16_t)((T_BG >> 8) | (T_BG << 8));
             for (y = Y_GRAPH; y < Y_GRAPH + H_GRAPH; y++)
@@ -4199,15 +4173,15 @@ static int test_play_leds(void)
     uint32_t i;
     ui_power_on();
     song.sel = 0;
-    t->step[0] = (step_t){.note = {60, 64}, .n = 2, .time = ST_NOTE};
-    t->step[1] = (step_t){.note = {100}, .n = 1, .time = ST_NOTE};
-    trk[1].step[0] = (step_t){.note = {67}, .n = 1, .time = ST_NOTE};
+    st_set(t, 0, (step_t){.note = {60, 64}, .n = 2, .time = ST_NOTE});
+    st_set(t, 1, (step_t){.note = {100}, .n = 1, .time = ST_NOTE});
+    st_set(&trk[1], 0, (step_t){.note = {67}, .n = 1, .time = ST_NOTE});
     t->seq_active = trk[1].seq_active = 1;
     bad += check("stopped, nothing held: no key lit", key_leds(0) == 0u && play_leds() == 0u);
     seq_start();
     events_block(CTL);
     bad += check("playing: C4 and E4 of step 1 light keys 8 and 12 (from F3), track 2's G4 does not",
-                 t->seq_n == 2u && trk[1].seq_n == 1u && key_leds(0) == (1u << 7 | 1u << 11));
+                 t->seq_on_n == 2u && trk[1].seq_on_n == 1u && key_leds(0) == (1u << 7 | 1u << 11));
     song.sel = 1;
     bad += check("the selected track's notes: track 2's G4 on key 15", play_leds() == 1u << 14);
     song.sel = 0;
@@ -4233,7 +4207,7 @@ static int test_play_leds(void)
     bad += check("the ARP's note lights its key too", play_leds() == (1u << 7 | 1u << 11 | 1u << 12));
     t->arp_note = 0;
     events_block(div_samples((uint32_t)t->p[P_SDIV]) + CTL);
-    bad += check("a note above the keyboard (G#7) lights nothing", t->seq_n == 1u && t->seq_notes[0] == 100u &&
+    bad += check("a note above the keyboard (G#7) lights nothing", t->seq_on_n == 1u && t->seq_on[0].row == 100u &&
                  play_leds() == 0u);
     transport_req = 2;
     events_block(CTL);
@@ -4244,13 +4218,14 @@ static int test_play_leds(void)
     ui.layer = 1;
     ok = key_leds(0) == layer_leds(0);
     ui.layer = 0;
-    set_engine_of(t, ENGI_DRUM);
+    set_engine_of(t, ENGI_606);
     t->engine = t->eng_req;
-    t->step[0] = (step_t){.hit = 1u << DV_KICK, .time = ST_NOTE};
+    pat_clear(&t->pat);
+    st_set(t, 0, (step_t){.hit = 1u << DV_KICK, .time = ST_NOTE});
     transport_req = 2; events_block(CTL);
     seq_start(); events_block(CTL);
     i = play_leds();
-    ok &= t->seq_n == 1u && i != 0u && kb_map(t, (uint32_t)__builtin_ctz(i)) == DRUM_LANE_NOTE[DV_KICK];
+    ok &= t->seq_on_n == 1u && i != 0u && kb_map(t, (uint32_t)__builtin_ctz(i)) == DRUM_LANE_NOTE[DV_KICK];
     open_family(FAM_SEQ);
     frame();
     ok &= grid_on() && key_leds(0) == grid_leds();
@@ -4269,10 +4244,9 @@ static int test_cursor_step_leds(void)
     ui_power_on();
     song.sel = 0;
     t = TSEL;
-    t->step[0] = (step_t){.note = {60, 64}, .n = 2, .time = ST_NOTE};
-    t->step[1] = (step_t){.note = {100}, .n = 1, .time = ST_NOTE};
-    t->step[2] = (step_t){.note = {62}, .n = 1, .time = ST_REST};
-    t->step[3] = (step_t){.note = {67}, .n = 1, .time = ST_TIE};
+    st_set(t, 0, (step_t){.note = {60, 64}, .n = 2, .time = ST_NOTE});
+    st_set(t, 1, (step_t){.note = {100}, .n = 1, .time = ST_NOTE});
+    pat_add(&t->pat, 67, 2, 2, 96);                    /* (CESARI: G4 held over steps 3 and 4) */
     t->seq_active = 1;
     bad += check("#89 HOME, stopped: no step's keys lit", key_leds(0) == 0u);
     go_page(GR_ROLL);
@@ -4288,33 +4262,30 @@ static int test_cursor_step_leds(void)
     fm1_in.notes = 1u << 0;
     bad += check("#89 a key held lights with them", key_leds(0) == (1u << 0 | 1u << 7 | 1u << 11));
     fm1_in.notes = 0;
-    turn(EN_K1, 1);
+    turn(EN_PRESET, 1);
     ok = ui.cursor == 1u && key_leds(0) == 0u;          /* G#7: off the keyboard */
-    turn(EN_K1, 1);
-    ok &= ui.cursor == 2u && key_leds(0) == 0u;         /* a REST */
-    turn(EN_K1, 1);
-    ok &= ui.cursor == 3u && key_leds(0) == 1u << 14;   /* a TIE carries its G4 */
-    turn(EN_K1, 1);
+    turn(EN_PRESET, 1);
+    ok &= ui.cursor == 2u && key_leds(0) == 1u << 14;   /* G4 starts */
+    turn(EN_PRESET, 1);
+    ok &= ui.cursor == 3u && key_leds(0) == 1u << 14;   /* .. and holds */
+    turn(EN_PRESET, 1);
     ok &= ui.cursor == 4u && key_leds(0) == 0u;         /* empty */
-    bad += check("#89 KNOB 1 moves the cursor and the keys follow its step (REST, empty, off the keys: dark)", ok);
-    turn(EN_K1, -4);
+    bad += check("#89 PRESETS moves the cursor and the keys follow the notes there (held ones too; empty, off the keys: dark)", ok);
+    turn(EN_PRESET, -4);
     seq_start();
     events_block(CTL);
     bad += check("#89 playing: the keys show what plays, not the cursor step", song.playing && ui.cursor == 0u &&
                  key_leds(0) == play_leds());
-    turn(EN_K1, 3);
+    turn(EN_PRESET, 3);
     bad += check("#89   (the cursor on G4's step changes nothing while playing)", key_leds(0) == play_leds() &&
                  !((key_leds(0) >> 14) & 1u));
     transport_req = 2;
     events_block(CTL);
     frame();
     bad += check("#89 stopped again: the cursor step's keys", !song.playing && key_leds(0) == 1u << 14);
-    go_page(GR_CHANCE);
-    frame();
-    bad += check("#89 CHANCE (same cursor): no step keys", key_leds(0) == 0u);
-    set_engine_of(t, ENGI_DRUM);
+    set_engine_of(t, ENGI_606);
     t->engine = t->eng_req;
-    t->step[0] = (step_t){.hit = 1u << DV_KICK, .time = ST_NOTE};
+    st_set(t, 0, (step_t){.hit = 1u << DV_KICK, .time = ST_NOTE});
     go_page(GR_ROLL);
     frame();
     bad += check("#89 the DRUM grid keeps its map", grid_on() && key_leds(0) == grid_leds());
@@ -4396,7 +4367,7 @@ static int test_midi_leds(void)
     usb_note(0, 60, 100);
     ok = key_leds(0) == (1u << 0 | 1u << 7);
     fm1_in.notes = 0;
-    trk[0].step[0] = (step_t){.note = {64}, .n = 1, .time = ST_NOTE};
+    st_set(&trk[0], 0, (step_t){.note = {64}, .n = 1, .time = ST_NOTE});
     trk[0].seq_active = 1;
     seq_start();
     events_block(CTL);
@@ -4411,7 +4382,7 @@ static int test_midi_leds(void)
     open_family(FAM_SEQ);                              /* STEP on a melodic track: the keys as elsewhere */
     frame();
     ok &= !grid_on() && (key_leds(0) & (1u << 7));
-    set_engine_of(&trk[0], ENGI_DRUM);
+    set_engine_of(&trk[0], ENGI_606);
     trk[0].engine = trk[0].eng_req;
     frame();
     ok &= grid_on() && key_leds(0) == grid_leds();
@@ -4629,12 +4600,12 @@ static int test_step_leds(void)
                 ui_power_on();
                 song.sel = 0;
                 if (drum) {
-                    set_engine_of(TSEL, ENGI_DRUM);
+                    set_engine_of(TSEL, ENGI_606);
                     TSEL->engine = TSEL->eng_req;
                     TSEL->p[P_SLEN] = 16;
-                    TSEL->step[2] = (step_t){.hit = 1u << DV_KICK, .time = ST_NOTE};   /* one hit, on step 3 */
+                    st_set(TSEL, 2, (step_t){.hit = 1u << DV_KICK, .time = ST_NOTE});   /* one hit, on step 3 */
                 } else {
-                    TSEL->step[0] = (step_t){.note = {60}, .n = 1, .time = ST_NOTE};   /* C4 on step 1 */
+                    st_set(TSEL, 0, (step_t){.note = {60}, .n = 1, .time = ST_NOTE});   /* C4 on step 1 */
                 }
                 TSEL->seq_active = 1;
                 settings_leds = (uint8_t)m;
@@ -4671,7 +4642,7 @@ static int test_step_leds(void)
                 bad += check(what, !btn_bad && host_dim_lo == (m == LEDS_DIM_LO) &&
                                        grid_on() == (int)drum && (!run || kc) &&
                                        keys_dim == want_dim && keys_lit == (m == LEDS_INV && !drum ? 27u - kc : kc) &&
-                                       (!glow || keys_lit + keys_dim >= 25u) &&
+                                       (!glow || keys_lit + keys_dim >= (drum ? 24u : 25u)) &&   /* (the 606: 16 steps, 8 rows) */
                                        ((fm1_led[LED_PLAY_GREEN >> 3] >> (LED_PLAY_GREEN & 7u)) & 1u) == run);
                 if (run) {
                     transport_req = 2;
@@ -4703,12 +4674,13 @@ static int test_seq_quant(void)
     t->p[P_SCALE] = 1;
     t->p[P_ROOT] = 0;
     ok = kb_map(t, 8) == 60u && kb_map(t, 7) == 60u;   /* C#4 key -> C4, as SNAP */
-    t->step[0] = (step_t){.note = {61, 66}, .n = 2, .time = ST_NOTE};
+    st_set(t, 0, (step_t){.note = {61, 66}, .n = 2, .time = ST_NOTE});
     t->seq_active = 1;
     seq_start();
     events_block(CTL);
-    ok &= t->seq_n == 2u && t->seq_notes[0] == 60u && t->seq_notes[1] == 65u && t->step[0].note[0] == 61u &&
-          t->step[0].note[1] == 66u;
+    ok &= t->seq_on_n == 2u && (t->seq_on[0].row == 60u || t->seq_on[1].row == 60u) &&
+          (t->seq_on[0].row == 65u || t->seq_on[1].row == 65u) && (*st_of(t, 0)).note[0] == 61u &&
+          (*st_of(t, 0)).note[1] == 66u;
     transport_req = 2;
     events_block(CTL);
     bad += check("QNT SEQ: the keys snap as SNAP; C#4 F#4 of a step play C4 F4 in C major, the step keeps C#4 F#4", ok);
@@ -5123,7 +5095,7 @@ static int test_layer_lock(void)
         ui.cursor = 0;
         press(B_EDIT); press(B_EDIT); frames(100);
         bad += check("  EDIT on STEP (it clears the step): two quick taps clear two steps, no lock",
-                     !ui.lock && !ui.layer && ui.cursor == 2u && t->step[0].time == ST_REST);
+                     !ui.lock && !ui.layer && ui.cursor == 2u && (*st_of(t, 0)).time == ST_REST);
     }
     return bad;
 }
@@ -5802,14 +5774,14 @@ static int test_menu_prefs(void)
         track_t *t = TSEL;
         uint32_t lo_on;
         ui_power_on();
-        for (k = 0; k < NSTEP; k++) step_clear(&t->step[k]);
-        t->step[0].n = 1; t->step[0].note[0] = 30; t->step[0].time = ST_NOTE;
+        pat_clear(&t->pat);
+        pat_add(&t->pat, 30, 0, 1, 96);
         ui.force = 0;
         proll.init = 0; pr_follow(t); ui.frame++;
-        t->step[0].note[0] = 90; pr_follow(t); lo_on = proll.lo;
+        t->pat.note[0].row = 90; pr_follow(t); lo_on = proll.lo;
         ui_prefs = PREF_ANIM_OFF;
-        proll.init = 0; t->step[0].note[0] = 30; pr_follow(t); ui.frame++;
-        t->step[0].note[0] = 90; pr_follow(t);
+        proll.init = 0; t->pat.note[0].row = 30; pr_follow(t); ui.frame++;
+        t->pat.note[0].row = 90; pr_follow(t);
         ok = proll.moving == 0 && proll.lo > lo_on && lo_on != 0u;
         if (!ok) printf("  piano roll view: ON %u, OFF %u (moving %u)\n", lo_on, proll.lo, proll.moving);
         bad += check("#46 ANIM OFF: the piano roll's view jumps to the notes (ON: it glides)", ok);

@@ -51,8 +51,8 @@ static __attribute__((noinline)) void midi_clock_pulse(uint32_t ms)
                 for (i = 0; i < NTRK; i++) {
                     if (trk[i].seq_pos < (uint32_t)FS * 2u)
                         trk[i].seq_pos = (uint32_t)(((uint64_t)trk[i].seq_pos * ratio + 2048u) >> 12);
-                    if (trk[i].seq_off)
-                        trk[i].seq_off = (uint32_t)(((uint64_t)trk[i].seq_off * ratio + 2048u) >> 12);
+                    for (uint32_t j = 0; j < trk[i].seq_on_n; j++)   /* (CESARI: the notes' note-offs) */
+                        trk[i].seq_on[j].left = (uint32_t)(((uint64_t)trk[i].seq_on[j].left * ratio + 2048u) >> 12);
                 }
             }
             midi_beat_samples = new_beat;

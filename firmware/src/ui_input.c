@@ -69,16 +69,16 @@ static uint32_t oct_leds(void)
 static uint32_t grid_leds(void)
 {
     const track_t *t = TSEL;
-    uint32_t k, m = 0, len = (uint32_t)t->p[P_SLEN], b = 1u << ui.lane, acc = (uint32_t)black_held(GK_ACC);
-    uint32_t ph = song.playing && t->seq_idx < len && t->seq_idx / 16u == ui.bank ? t->seq_idx % 16u : 0xFFu;
+    uint32_t k, m = 0, len = grid_len(t), rows = grid_rows(t), lane = grid_lane(t);
+    uint32_t pos = t->seq_count % len, ph = song.playing && pos / 16u == ui.bank ? pos % 16u : 0xFFu;
     for (k = 0; k < 27u; k++) {
         uint32_t p = key_place(k), on;
         if (!key_black(k)) {
             uint32_t i = ui.bank * 16u + p;
-            on = i < len && ((acc ? step_accents(&seq_steps(t)[i]) : step_lanes(&seq_steps(t)[i])) & b) != 0u;
+            on = i < len && grid_find(t, lane, i) >= 0;
             on ^= (uint32_t)(p == ph);
         } else {
-            on = p < NLANE ? p == ui.lane : p == GK_ACC ? acc : len > 16u;
+            on = p < 9u && p < rows ? p == ui.lane : p >= GK_PGDN && len > 16u;
         }
         m |= on << k;
     }
@@ -89,10 +89,10 @@ static uint32_t grid_leds(void)
  * within LEN, the lane keys, ACC, the page keys while there is more than one page */
 static uint32_t grid_glow(void)
 {
-    uint32_t k, m = 0, len = (uint32_t)TSEL->p[P_SLEN];
+    uint32_t k, m = 0, len = grid_len(TSEL), rows = grid_rows(TSEL);
     for (k = 0; k < 27u; k++) {
         uint32_t p = key_place(k);
-        m |= (uint32_t)(!key_black(k) ? ui.bank * 16u + p < len : p < NLANE || p == GK_ACC || len > 16u) << k;
+        m |= (uint32_t)(!key_black(k) ? ui.bank * 16u + p < len : (p < 9u && p < rows) || (p >= GK_PGDN && len > 16u)) << k;
     }
     return m;
 }
@@ -133,10 +133,10 @@ static uint32_t midi_leds(const track_t *t)
 static uint32_t play_leds(void)
 {
     const track_t *t = TSEL;
-    uint8_t s[4 + NLANE + 1];
-    uint32_t n = t->seq_n < 4u + NLANE ? t->seq_n : 4u + NLANE, i, k, note, used = 0, m = 0, hit;
+    uint8_t s[SEQ_ON + 1];
+    uint32_t n = t->seq_on_n < SEQ_ON ? t->seq_on_n : SEQ_ON, i, k, note, used = 0, m = 0, hit;
     for (i = 0; i < n; i++)
-        s[i] = t->seq_notes[i];
+        s[i] = t->seq_on[i].row;
     if (t->arp_note)
         s[n++] = t->arp_note;
     for (k = 0; n && k < 27u; k++) {
@@ -158,19 +158,17 @@ static uint32_t play_leds(void)
 static uint32_t step_leds(void)
 {
     const track_t *t = TSEL;
-    const step_t *st;
-    uint32_t i, k, note, used = 0, m = 0;
+    uint32_t i, k, note, m = 0;
+    uint64_t used = 0;
     if (ui.home || ui.menu || ui.confirm || !song.seq_mode || cur_page()->graph != GR_ROLL || song.playing ||
         chain_busy() || ui.cursor >= NSTEP)
         return 0;
-    st = &t->step[ui.cursor];
-    if (!st->n || st->time == ST_REST)
-        return 0;
-    for (k = 0; k < 27u; k++) {
+    for (k = 0; k < 27u; k++) {                       /* (CESARI: the notes starting at the cursor) */
         note = kb_map(t, k);
-        for (i = 0; i < st->n && i < 4u; i++)
-            if (st->note[i] == note && !((used >> i) & 1u)) {
-                used |= 1u << i;
+        for (i = 0; i < t->pat.n && i < 64u; i++)
+            if (t->pat.note[i].row == note && !((used >> i) & 1u) && t->pat.note[i].start <= ui.cursor &&
+                ui.cursor < (uint32_t)t->pat.note[i].start + t->pat.note[i].len) {   /* (starting or held there) */
+                used |= (uint64_t)1u << i;
                 m |= 1u << k;
             }
     }
@@ -384,47 +382,62 @@ static void rec_hold_clear(void)
 /* the grid's page down (-1) / up (+1): the cursor to the same place on it (at most the last step) */
 static void page_go(int32_t d)
 {
-    uint32_t len = (uint32_t)TSEL->p[P_SLEN], pages = (len + 15u) / 16u, b;
+    uint32_t len = grid_on() ? grid_len(TSEL) : (uint32_t)TSEL->p[P_SLEN], pages = (len + 15u) / 16u, b;
     if (pages < 2u)
         return;
     b = (ui.bank + pages + (uint32_t)d) % pages;
     cursor_set((int32_t)(b * 16u + ui.cursor % 16u < len ? b * 16u + ui.cursor % 16u : len - 1u));
 }
 
-/* CESARI: the grid's knobs: 1 nothing yet (the white keys turn hits on and off), 2 VEL and 3 CHANCE of the
- * step at the cursor (10 % a detent), 4 LEN of the pattern. The cursor is PRESETS (left / right) and ALGORITHM (the
- * lane, up / down); SELECT stays the tempo */
-static void grid_edit(uint32_t slot, int32_t steps)
+/* CESARI: a note's velocity / chance / nudge / length by a knob's steps (relative: several notes move together) */
+static void note_turn(note_t *n, uint32_t what, int32_t steps, int32_t vel_steps)
 {
-    step_t *st = &TSEL->step[ui.cursor % NSTEP];
-    if (slot == 0u) {
-        return;
-    } else if (slot == 1u) {
-        if (st->time != ST_NOTE || !step_on(st))
-            return;                                       /* (an empty step has no velocity) */
-        st->flags &= (uint8_t)~SF_ACCENT;
-        st->vel = (uint8_t)clamp((int32_t)(st->vel ? st->vel : 96u) + accel(EN_K2, steps, 126), 1, 127);
-    } else if (slot == 2u) {
-        int32_t c = (int32_t)step_chance(st);
-        c = (steps > 0 ? c / 10 : (c + 9) / 10) * 10 + 10 * steps;
-        step_set_chance(st, (uint32_t)clamp(c, 10, 100));
-    } else {
-        TSEL->p[P_SLEN] = (int16_t)clamp(TSEL->p[P_SLEN] + steps, 1, NSTEP);
-        cursor_set(ui.cursor);
+    switch (what) {
+    case 0:
+        n->nudge = (int8_t)clamp(n->nudge + steps, -NUDGE_MAX, NUDGE_MAX);
+        break;
+    case 1:
+        n->vel = (uint8_t)clamp((int32_t)n->vel + vel_steps, 1, 127);
+        break;
+    case 2:
+        n->chance = (uint8_t)chance_of_pos((uint32_t)clamp((int32_t)chance_pos(n->chance) + steps, 0, NOTE_CH_POS - 1));
+        break;
+    default:
+        n->len = (uint8_t)clamp((int32_t)n->len + steps, 1, NSTEP);
+        break;
     }
 }
 
-/* CESARI: ALGORITHM on the grid: the lane, down (right) or up (left) */
-static void grid_lane(int32_t s)
+/* CESARI: the grid's knobs: 1 NUDGE, 2 VEL, 3 CHANCE (10 % .. 100 %, then the loop conditions 1:2 .. 4:4) of the
+ * selected drum's note at the cursor; 4 the drum's own LEN. The cursor is PRESETS (along) and ALGORITHM (the
+ * rows); the white keys add and delete notes; SELECT stays the tempo */
+static void grid_edit(uint32_t slot, int32_t steps)
 {
-    ui.lane = (uint8_t)clamp((int32_t)ui.lane + (s > 0 ? 1 : -1), 0, NLANE - 1);
+    track_t *t = TSEL;
+    if (slot < 3u) {
+        int32_t j = grid_find(t, grid_lane(t), ui.cursor);
+        if (j >= 0)
+            note_turn(&t->pat.note[j], slot, steps, accel(EN_K2, steps, 126));
+    } else {
+        uint32_t l = grid_lane(t), len = grid_len(t);
+        if (l < KIT_LANES)
+            t->pat.lane_len[l] = (uint8_t)clamp((int32_t)len + steps, 1, NSTEP);
+        cursor_fix();
+    }
 }
 
-/* the keys on the grid (presses): a white key toggles the selected lane at its step of the page (its accent
- * while ACC is held) and puts the cursor there; a lane key selects the lane (seq.c plays it); the page keys */
+/* CESARI: ALGORITHM on the grid: the row, down (right) or up (left) */
+static void grid_row_step(int32_t s)
+{
+    ui.lane = (uint8_t)clamp((int32_t)ui.lane + (s > 0 ? 1 : -1), 0, (int32_t)grid_rows(TSEL) - 1);
+    cursor_fix();
+}
+
+/* the keys on the grid (presses): a white key adds the selected drum's note on its step of the page or deletes
+ * the one there, and puts the cursor there; black keys 1..9 select their row (seq.c plays it); the page keys */
 static void grid_keys(uint32_t pressed)
 {
-    uint32_t k, len = (uint32_t)TSEL->p[P_SLEN];
+    uint32_t k, len = grid_len(TSEL), rows = grid_rows(TSEL);
     for (k = 0; k < 27u; k++) {
         uint32_t p = key_place(k);
         if (!((pressed >> k) & 1u))
@@ -433,54 +446,44 @@ static void grid_keys(uint32_t pressed)
             uint32_t i = ui.bank * 16u + p;
             if (chain_busy()) { ui_message("STOP TO EDIT"); continue; }
             if (i >= len)
-                continue;                               /* past LEN: no step there */
-            if (black_held(GK_ACC))
-                grid_acc(TSEL, i, ui.lane, 2);
-            else
-                grid_hit(TSEL, i, ui.lane, 2);
+                continue;                               /* past the drum's LEN: no step there */
+            grid_set(TSEL, i, 2);
             cursor_set((int32_t)i);
-        } else if (p < NLANE) {
-            ui.lane = (uint8_t)p;
-        } else if (p != GK_ACC) {
+        } else if (p < 9u) {
+            if (p < rows) {
+                ui.lane = (uint8_t)p;
+                cursor_fix();
+            }
+        } else {
             page_go(p == GK_PGUP ? 1 : -1);
         }
     }
 }
 
+/* CESARI: SEQ > STEP on a synth track: the notes starting at the cursor. KNOB 1 their LEN, 2 VEL, 3 CHANCE (all of
+ * them by the same steps), 4 the pattern's LEN; PRESETS moves the cursor; a key adds its note there, again
+ * deletes it (seq_entry) */
 static void step_edit(uint32_t slot, int32_t steps)
 {
-    step_t *st = &TSEL->step[ui.cursor];
+    track_t *t = TSEL;
     uint32_t i;
-    if (drum_track(TSEL)) {
+    int32_t vs;
+    if (drum_track(t)) {
         grid_edit(slot, steps);
         return;
     }
-    switch (slot) {
-    case 0:                                               /* STEP: the cursor */
-        cursor_set(ui.cursor + steps);
-        break;
-    case 1:                                               /* NOTE: transpose the step */
-        if (!st->n) {
-            st->note[0] = last_note;
-            st->n = 1;
-            st->time = ST_NOTE;
-            break;
+    if (slot == 3u) {
+        t->p[P_SLEN] = (int16_t)clamp(t->p[P_SLEN] + steps, 1, NSTEP);
+        cursor_fix();
+        return;
+    }
+    vs = accel(EN_K2, steps, 126);
+    for (i = 0; i < t->pat.n; i++)
+        if (t->pat.note[i].start == ui.cursor) {
+            note_turn(&t->pat.note[i], slot == 0u ? 3u : slot, steps, vs);
+            if (slot == 0u)
+                ui.note_len = t->pat.note[i].len;
         }
-        for (i = 0; i < st->n; i++)
-            st->note[i] = (uint8_t)clamp(st->note[i] + steps, 1, 127);
-        st->time = ST_NOTE;
-        last_note = st->note[0];
-        break;
-    case 2:
-        st->time = (uint8_t)clamp((int32_t)st->time + (steps > 0 ? 1 : -1), ST_NOTE, ST_REST);
-        break;
-    default: {                                            /* FLAG: - / ACC / SLD / A+S */
-        uint32_t f = (st->flags & SF_ACCENT ? 1u : 0u) | (st->flags & SF_SLIDE ? 2u : 0u);
-        f = (uint32_t)clamp((int32_t)f + (steps > 0 ? 1 : -1), 0, 3);
-        st->flags = (uint8_t)((st->flags & ~(SF_ACCENT | SF_SLIDE)) | (f & 1u ? SF_ACCENT : 0u) | (f & 2u ? SF_SLIDE : 0u));
-        break;
-    }
-    }
 }
 
 static void edit_param(uint32_t slot, int32_t steps)
@@ -489,18 +492,6 @@ static void edit_param(uint32_t slot, int32_t steps)
     const page_t *pg = cur_page();
     const param_desc_t *d;
     int32_t v;
-    if (pg->graph == GR_CHANCE) {
-        if (slot == 0u) cursor_set(ui.cursor + steps);
-        else if (slot == 1u || slot == 2u) {
-            if (chain_busy()) { ui_message("STOP TO EDIT"); return; }
-            step_t *st = &TSEL->step[ui.cursor];
-            if (slot == 1u)
-                step_set_chance(st, (uint32_t)clamp((int32_t)step_chance(st) + steps, 0, 100));
-            else                                      /* RATCH x1..x4 */
-                step_set_ratchet(st, (uint32_t)clamp((int32_t)step_ratchet(st) + steps, 1, 4));
-        }
-        return;
-    }
     if (pg->graph == GR_MOTION) {
         if (chain_busy()) { ui_message("STOP TO EDIT"); return; }
         if (slot == 0u) motion_set_enabled(TSEL, steps > 0);
@@ -701,39 +692,36 @@ static uint32_t oct_taps(uint32_t pressed, int here)
 static void seq_entry(uint32_t pressed)
 {
     track_t *t = TSEL;
-    step_t *st = &t->step[ui.cursor];
     uint32_t k;
-    for (k = 0; k < 27u; k++) {
-        uint8_t ch[CHORD_MAX];
-        int32_t r;
+    for (k = 0; k < 27u; k++) {                         /* CESARI: a key adds its note (its chord) at the cursor */
+        uint8_t ch[CHORD_MAX];                          /* or deletes it when it is there */
+        int32_t r, j;
         uint16_t mask;
-        uint32_t note, n, i, j;
+        uint32_t note, n, i;
         if (!((pressed >> k) & 1u))
             continue;
         note = kb_map(t, k);
         if (note == KB_SILENT)
             continue;
-        if (!ui.entry_open) {
-            ui.entry_open = 1;
-            st->n = 0;
-            st->time = ST_NOTE;
-        }
-        n = chord_make(t, note, ch, &r, &mask);        /* (CHRD OFF, a kit: the note alone; MONO: the root) */
-        if (t->p[P_VOICE] && !ENGINES[t->engine]->oneshot) {   /* (drums: hits stack as a chord) */
-            st->note[0] = ch[0];
-            st->n = 1;
+        n = chord_make(t, note, ch, &r, &mask);        /* (CHRD OFF: the note alone; MONO: the root) */
+        if (t->p[P_VOICE] && !ENGINES[t->engine]->oneshot)
+            n = 1;
+        if ((j = pat_find(&t->pat, ch[0], ui.cursor)) >= 0) {
+            for (i = 0; i < n; i++)
+                if ((j = pat_find(&t->pat, ch[i], ui.cursor)) >= 0)
+                    pat_del(&t->pat, (uint32_t)j);
         } else {
-            for (i = 0; i < n && st->n < 4u; i++) {
-                for (j = 0; j < st->n && st->note[j] != ch[i]; j++)
-                    ;
-                if (j == st->n)
-                    st->note[st->n++] = ch[i];
-            }
+            if (t->p[P_VOICE] && !ENGINES[t->engine]->oneshot)   /* (MONO: one note a step) */
+                pat_del_step(&t->pat, ui.cursor);
+            for (i = 0; i < n; i++)
+                if (pat_add(&t->pat, ch[i], ui.cursor, ui.note_len ? ui.note_len : 1u, 100u) < 0) {
+                    ui_message("PATTERN FULL");
+                    break;
+                }
         }
+        t->seq_active = 1;
         last_note = (uint8_t)note;
     }
-    if (ui.entry_open && !(fm1_in.notes & ~kb_layer))
-        cursor_set(ui.cursor + 1);
 }
 
 /* Discussions #92 / #94: the PRESETS knob by page (the menu, a dialog, NAME and the layers: ui_input before this).
@@ -749,9 +737,9 @@ static void presets_turn(int32_t s)
     uint32_t g = pg->graph;
     if (ui.home || g == GR_BROWSE) {
         preset_step(s);
-    } else if (grid_on()) {
-        cursor_set(ui.cursor + s);                        /* (CESARI: the grid's cursor; its knobs edit the step) */
-    } else if (g == GR_ROLL || g == GR_CHANCE || g == GR_USER || g == GR_SLOTS || g == GR_PATS || g == GR_SONG) {
+    } else if (g == GR_ROLL) {
+        cursor_set(ui.cursor + s);                        /* (CESARI: STEP and the grid: the cursor; KNOB 1 is LEN) */
+    } else if (g == GR_CHANCE || g == GR_USER || g == GR_SLOTS || g == GR_PATS || g == GR_SONG) {
         edit_param(0, s);                                 /* KNOB 1's (STEP: STOP TO EDIT while a song plays) */
         ui.hot_col = 0;
         ui.hot_t = 40;
@@ -810,11 +798,8 @@ static int page_tap(uint32_t b)
         return 0;
     }
     if (b == B_EDIT && grid_on() && track_kit(TSEL)) {  /* CESARI: the grid: EDIT opens the lane's drum */
-        const kit_if_t *k = track_kit(TSEL);
-        int32_t l = k->lane_of(DRUM_LANE_NOTE[ui.lane % NLANE]);
         uint32_t back = ui.page, i;
-        if (l >= 0)
-            kit_sel[song.sel % NTRK] = (uint8_t)l;
+        kit_sel[song.sel % NTRK] = (uint8_t)grid_lane(TSEL);
         kit_row[song.sel % NTRK] = 0;
         for (i = 0; i < NPAGES && PAGES[i].scope != SC_KIT; i++)
             ;
@@ -841,7 +826,7 @@ static int page_tap(uint32_t b)
     }
     if (b == B_EDIT && song.seq_mode && !ui.home && cur_page()->graph == GR_ROLL && !drum_track(TSEL)) {   /* STEP: EDIT clears the step */
         if (chain_busy()) { ui_message("STOP TO EDIT"); return 1; }
-        step_clear(&TSEL->step[ui.cursor]);
+        pat_del_step(&TSEL->pat, ui.cursor);
         cursor_set(ui.cursor + 1);
         ui_message("STEP CLEARED");
         return 1;
@@ -1166,7 +1151,7 @@ static void ui_input(void)
         presets_turn(s);
     if (!lay && (s = panel_enc(EN_ALGO)) != 0) {   /* ALGORITHM: the selected track, on every page */
         if (grid_on())
-            grid_lane(s);                               /* (CESARI: the grid's lane) */
+            grid_row_step(s);                           /* (CESARI: the grid's row) */
         else
             track_select((uint32_t)clamp((int32_t)song.sel + (s > 0 ? 1 : -1), 0, NTRK - 1));
     }

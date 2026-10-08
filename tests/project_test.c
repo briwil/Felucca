@@ -154,6 +154,31 @@ static int track_v3_ok(const proj_trk_t *n, const proj_trk_v3_t *o, uint32_t t)
     return ok;
 }
 
+/* CESARI: a FUN8 image of q as the firmware before notes wrote it (its steps; FM6 patches; name) */
+static int pack_v8(project_store_t *out, const project_t *q)
+{
+    uint8_t *b = out->raw; uint32_t pos = 68u, t, i, j, magic = PROJ_MAGIC_V8, size = PROJ_STORE_SIZE, sum;
+    memset(out, 0, sizeof *out); memcpy(b, &magic, 4); memcpy(b + 4, &size, 4);
+    memcpy(b + 8, q->g, sizeof q->g); b[62] = q->sel; b[63] = q->parts; b[64] = q->phys; b[66] = P_COUNT;
+    for (t = 0; t < NTRK; t++) {
+        for (i = 0; i < P_COUNT; i++) b[pos++] = (uint8_t)(q->t[t].p[i] + 64);
+        b[pos++] = q->t[t].engine; b[pos++] = q->t[t].preset;
+        for (i = 0; i < NSTEP; i++) {
+            const step_t *s = &q->t[t].step[i];
+            for (j = 0; j < 4u; j++) b[pos++] = s->note[j] > 127u ? 127u : s->note[j];
+            b[pos++] = (uint8_t)(s->n | s->time << 3 | (s->flags & 3u) << 5);
+            b[pos++] = s->vel > 127u ? 127u : s->vel; b[pos++] = s->hit; b[pos++] = s->acc & s->hit;
+            b[pos++] = s->probability > 101u ? 0u : s->probability;
+        }
+    }
+    memcpy(b + pos, &q->chain, sizeof q->chain); pos += sizeof q->chain;
+    memcpy(b + pos, &q->motion, sizeof q->motion);
+    memcpy(b + PROJ_FM6_OFF, q->fm6, sizeof q->fm6);
+    memcpy(b + PROJ_NAME_OFF, q->name, PROJ_NAME_LEN);
+    for (i = 0; i < PROJ_NAME_LEN; i++) if (b[PROJ_NAME_OFF + i] >= 'a' && b[PROJ_NAME_OFF + i] <= 'z') b[PROJ_NAME_OFF + i] -= 32u;
+    sum = proj_hash(b, PROJ_STORE_SIZE - 4u); memcpy(b + PROJ_STORE_SIZE - 4u, &sum, 4);
+    return 1;
+}
 int main(void)
 {
     static project_v4_t v4;
@@ -465,7 +490,7 @@ int main(void)
         }
         memcpy(a.name, "FM SONG", 7);
         a.sum = proj_sum(&a);
-        ok = proj_pack(&st, &a) && ((uint32_t *)st.raw)[0] == 0x46554E38u && proj_import(&c, &st, sizeof st);
+        ok = proj_pack(&st, &a) && ((uint32_t *)st.raw)[0] == PROJ_MAGIC && proj_import(&c, &st, sizeof st);
         for (k = 0; k < NTRK; k++)
             ok &= !memcmp(c.fm6[k], FM6_FACTORY[k * 2u], FM6_PACKED) && c.t[k].engine == ENGI_FM6 &&
                   !memcmp(st.raw + PROJ_FM6_OFF + k * FM6_PACKED, FM6_FACTORY[k * 2u], FM6_PACKED);
@@ -473,6 +498,9 @@ int main(void)
         st.raw[PROJ_FM6_OFF + 5] ^= 1u;
         bad += check("FUN8: a patch byte changed: the hash refuses it", !proj_import(&c, &st, sizeof st));
         st.raw[PROJ_FM6_OFF + 5] ^= 1u;
+        pack_v8(&st, &a);                               /* (CESARI: the FUN7 below from FUN8's layout) */
+        bad += check("FUN8 (steps): loads, its patches", proj_import(&c, &st, sizeof st) &&
+                     !memcmp(c.fm6[3], FM6_FACTORY[6], FM6_PACKED) && !memcmp(c.name, "FM SONG", 7));
         /* the same music as FUN7 (3388 bytes, no patches): the data where it was, the name at 3372 */
         memcpy(v7, st.raw, PROJ_STORE_V7 - 16u);
         memset(v7 + PROJ_FM6_OFF, 0, PROJ_STORE_V7 - 16u - PROJ_FM6_OFF);
@@ -512,13 +540,15 @@ int main(void)
         a.sum = proj_sum(&a);
         bad += check("FUN8: a patch byte above 127 cannot be packed", !proj_pack(&st, &a));
         memcpy(a.fm6[1], FM6_INIT, FM6_PACKED);
-        a.t[0].step[3].n = 1; a.t[0].step[3].note[0] = 200; a.t[0].step[3].note[2] = 128;
-        a.t[0].step[3].vel = 255; a.t[0].step[3].hit = 0x05; a.t[0].step[3].acc = 0xF7;
+        a.t[0].pat.n = 1;
+        a.t[0].pat.note[0] = (note_t){200, 3, 99, 255, 15, 40};
+        a.t[0].pat.lane_len[2] = 200;
         a.sum = proj_sum(&a);
         ok = proj_pack(&st, &a) && proj_import(&c, &st, sizeof st);
-        bad += check("FUN8: a step out of range packs inside it (note, velocity 127; accents on hits): it loads",
-                     ok && c.t[0].step[3].note[0] == 127u && c.t[0].step[3].note[2] == 127u && c.t[0].step[3].vel == 127u &&
-                     c.t[0].step[3].hit == 0x05u && c.t[0].step[3].acc == 0x05u);
+        bad += check("FUN9: a note out of range packs inside it (row, length, velocity 127; chance always, no nudge): it loads",
+                     ok && c.t[0].pat.n == 1u && c.t[0].pat.note[0].row == 127u && c.t[0].pat.note[0].start == 3u &&
+                     c.t[0].pat.note[0].len == NSTEP && c.t[0].pat.note[0].vel == 127u && !c.t[0].pat.note[0].chance &&
+                     !c.t[0].pat.note[0].nudge && !c.t[0].pat.lane_len[2]);
     }
 
 #if !FELUCCA_FM4
@@ -564,6 +594,7 @@ int main(void)
                      c.motion.count == 2u && c.motion.event[0].param == P_CHOR && c.motion.event[1].place == 3u &&
                      c.motion.event[1].param == P_E4 && motion_valid(&c.motion) && proj_ok(&c));
         bad += check("  imported again: as it is (FM6 now)", proj_import(&d, &c, sizeof c) && !memcmp(&d, &c, sizeof d));
+        pack_v8(&st, &a);
         memcpy(v7, st.raw, PROJ_STORE_V7 - 16u);       /* the same as FUN7 (as the FUN8 block above) */
         memset(v7 + PROJ_FM6_OFF, 0, PROJ_STORE_V7 - 16u - PROJ_FM6_OFF);
         memset(v7 + PROJ_STORE_V7 - 16u, 0, 12);
@@ -626,6 +657,7 @@ int main(void)
         a.t[2].preset = 4;
         a.t[2].step[0] = (step_t){{36, 42, 0, 0}, 2, ST_NOTE, SF_ACCENT, 100, 0, 0};
         a.t[2].step[4] = (step_t){{38, 49, 0, 0}, 2, ST_NOTE, 0, 90, 0, 0};
+        pat_from_steps(&a.t[2].pat, a.t[2].step, 16);
         a.t[0].p[P_E0] = 2;                             /* track 1: FLUTE stays */
         a.motion.count = 3;
         a.motion.event[0] = (motion_event_t){2u << 6 | 3u, P_E4, 20};          /* track 3: CUT: goes */
@@ -634,7 +666,7 @@ int main(void)
         a.sum = proj_sum(&a);
 #define PERC_OK(c) ((c).t[2].engine == ENGI_DRUM && (c).t[2].preset == 0u && !memcmp(&(c).t[2].p[P_E0], KIT, sizeof KIT) && \
                     !memcmp((c).t[2].p, a.t[2].p, P_E0 * sizeof(int16_t)) && \
-                    !memcmp((c).t[2].step, a.t[2].step, sizeof a.t[2].step) && \
+                    pat_sig_of(&(c).t[2].pat) == pat_sig_of(&a.t[2].pat) && (c).t[2].pat.n == 4u && \
                     (c).t[0].engine == ENGI_SAMPLE && (c).t[0].p[P_E0] == 2 && (c).t[1].engine == ENGI_SAMPLE)
         ok = proj_pack(&st, &a) && proj_import(&c, &st, sizeof st);
         bad += check("FUN8 with a SAMPLE PERC track: DRUM's kit, the rest of the sound and the steps kept", ok && PERC_OK(c) &&

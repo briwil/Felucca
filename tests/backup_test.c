@@ -174,7 +174,7 @@ int main(void)
     persist_t ps;
 
     reset();
-    trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 96, 0, 0};
+    st_set(&trk[0], 0, (step_t){{60}, 1, ST_NOTE, 0, 96, 0, 0});
     bad += check("LIST captures the runtime: 13 objects (id 8 empty, id 9 the FM6 patches), runtime 3584 B (FUN8)",
                  list(0, &len, &crc) == 0 && rep[2] == 13u && len == sizeof(project_store_t) && len == 3584u &&
                  crc == st_crc32(ED_BK_RAW, len));
@@ -271,7 +271,7 @@ int main(void)
 
     /* projects */
     reset();
-    trk[1].step[3] = (step_t){{64}, 1, ST_NOTE, 0, 96, 0, 0};
+    st_set(&trk[1], 3, (step_t){{64}, 1, ST_NOTE, 0, 96, 0, 0});
     project_capture(&proj_scratch);
     proj_pack(&st, &proj_scratch);
     bad += check("a FUN7 project restores into slot 3 (flash and RAM)",
@@ -288,10 +288,10 @@ int main(void)
     v6.t[0].p[61] = 3;                                   /* old E0 */
     chain_defaults(&v6.chain);
     v6.sum = proj_hash(&v6, sizeof v6 - 4u);
-    bad += check("a FUN6 project restores as FUN7, bounded, its E0 at P_E0",
+    bad += check("a FUN6 project restores as FUN9, bounded, its E0 at P_E0",
                  put_all(5, &v6, sizeof v6, st_crc32(&v6, sizeof v6)) == 0 && ((uint32_t *)proj_slot[3].raw)[0] == PROJ_MAGIC &&
-                 proj_import(&proj_scratch, &proj_slot[3], sizeof st) && proj_scratch.t[0].step[0].n == 4u &&
-                 proj_scratch.t[0].step[0].note[0] == 127u && proj_scratch.t[0].p[P_E0] ==
+                 proj_import(&proj_scratch, &proj_slot[3], sizeof st) && !proj_scratch.t[0].pat.n &&   /* (CESARI: the step of no time: no notes) */
+                 proj_scratch.t[0].p[P_E0] ==
                  clamp(3, param_desc_of(trk[0].engine, P_E0)->min, param_desc_of(trk[0].engine, P_E0)->max));
     {   /* 1.0.3: the FM6 patch bank (id 8) is retired; an older archive's bank moves into its user presets (ids 6, 7
          * restored first), the user presets' patches are id 9 */
@@ -363,13 +363,13 @@ int main(void)
 
     /* the runtime */
     reset();
-    trk[2].step[5] = (step_t){{67}, 1, ST_NOTE, 0, 96, 0, 0};
+    st_set(&trk[2], 5, (step_t){{67}, 1, ST_NOTE, 0, 96, 0, 0});
     trk[2].p[P_LEVEL] = 77;
     project_capture(&proj_scratch);
     proj_pack(&st, &proj_scratch);
     host_tracks_init();
     bad += check("the runtime object restores the tracks",
-                 put_all(0, &st, sizeof st, st_crc32(&st, sizeof st)) == 0 && trk[2].step[5].note[0] == 67u &&
+                 put_all(0, &st, sizeof st, st_crc32(&st, sizeof st)) == 0 && (*st_of(&trk[2], 5)).note[0] == 67u &&
                  trk[2].p[P_LEVEL] == 77);
 
     /* user preset banks: unknown record versions are kept as bytes */

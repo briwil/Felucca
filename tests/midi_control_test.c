@@ -98,7 +98,7 @@ static void clock_setup(uint32_t mode)
 {
     midi_test_reset(); song.g[G_CLOCK] = (int16_t)mode;
     trk[0].p[P_SLEN] = 16; trk[0].p[P_SDIV] = 2;
-    for (uint32_t i = 0; i < 16; i++) trk[0].step[i] = (step_t){{(uint8_t)(60 + i)}, 1, ST_NOTE, 0, 100};
+    for (uint32_t i = 0; i < 16; i++) st_set(&trk[0], i, (step_t){{(uint8_t)(60 + i)}, 1, ST_NOTE, 0, 100});
     events_block(CTL);
 }
 static void clock_packet(uint32_t source, uint32_t status, uint32_t ms)
@@ -122,11 +122,11 @@ static int clock_test(uint32_t source)
     bad += check(source == 1 ? "USB six pulses advance exactly one 16th step" : "TRS six pulses advance exactly one 16th step", trk[0].seq_idx == 1u && song.g[G_BPM] == 120);
     fm1_ms = 132; events_block(CTL); uint16_t idx = trk[0].seq_idx; uint32_t pos = trk[0].seq_pos;
     clock_packet(source, 0xFC, 133);
-    bad += check("external Stop preserves step position and releases sequence notes", !song.playing && trk[0].seq_idx == idx && trk[0].seq_pos == pos && !trk[0].seq_n);
+    bad += check("external Stop preserves step position and releases sequence notes", !song.playing && trk[0].seq_idx == idx && trk[0].seq_pos == pos && !trk[0].seq_on_n);
     clock_packet(source, 0xFB, 150);
     bad += check("external Continue resumes the existing step position", song.playing && trk[0].seq_idx == idx && trk[0].seq_pos == pos);
     clock_packet(source, 0xF8, 151); fm1_ms = 672; events_block(CTL);
-    bad += check("lost clock times out and releases transport notes", !song.playing && !trk[0].seq_n);
+    bad += check("lost clock times out and releases transport notes", !song.playing && !trk[0].seq_on_n);
     clock_packet(source, 0xFA, 700); clock_to(source, 700, 7);
     bad += check("Start after timeout restarts cleanly at the master's phase", song.playing && trk[0].seq_idx == 1u);
     /* Original base values remain after MIDI Stop even while motion sounds. */

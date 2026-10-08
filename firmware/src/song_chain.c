@@ -4,7 +4,7 @@
  * Sources are copied in the main loop before PLAY. The ISR changes only their
  * index and four timing parameters; the editable steps stay untouched. */
 typedef struct {
-    step_t step[NTRK][NSTEP];
+    pat_t pat[NTRK];                 /* (CESARI: notes) */
     int16_t timing[NTRK][4];
     motion_store_t motion;
 } chain_pattern_t;
@@ -16,7 +16,7 @@ static struct {
     volatile uint8_t armed, running, row, remaining;
     uint8_t slot, rec;
     uint32_t carry;
-} chain;
+} chain __attribute__((section(".pool")));   /* (CESARI: four sources of notes, 19 KB) */
 
 static void seq_release(track_t *t);
 static void seq_stop(void);
@@ -40,9 +40,9 @@ static int chain_valid(const chain_config_t *c)
             return 0;
     return 1;
 }
-static const step_t *seq_steps(const track_t *t)
+static const pat_t *seq_pat(const track_t *t)   /* the notes playing: the track's, in a song its source's */
 {
-    return chain.running ? chain.source[chain.slot].step[t - trk] : t->step;
+    return chain.running ? &chain.source[chain.slot].pat[t - trk] : &t->pat;
 }
 static void motion_restore(track_t *t);
 static void chain_apply(void)
@@ -54,8 +54,9 @@ static void chain_apply(void)
         seq_release(t);
         motion_restore(t);
         memcpy(&t->p[P_SLEN], chain.source[chain.slot].timing[i], sizeof chain.timing[i]);
-        t->seq_idx = (uint16_t)(t->p[P_SLEN] - 1);
-        t->seq_pos = 0x7FFFFFFFu;
+        t->seq_idx = 0;
+        t->seq_count = 0;
+        t->seq_pos = SEQ_FRESH;                     /* (its step 0 on the next block, from chain.carry) */
         t->rh_n = t->rskip_n = 0;
     }
 }
@@ -90,9 +91,9 @@ static void chain_tick(uint32_t n)
 {
     const track_t *t = &trk[0];
     uint32_t length;
-    if (!chain.running || t->seq_pos >= 0x7FFFFFFFu || t->seq_idx + 1u != (uint32_t)t->p[P_SLEN])
+    if (!chain.running || t->seq_pos == SEQ_FRESH || t->seq_idx + 1u != (uint32_t)t->p[P_SLEN])
         return;
-    length = step_samples(t, div_samples((uint32_t)t->p[P_SDIV]), t->seq_idx);
+    length = step_samples(t, div_samples((uint32_t)t->p[P_SDIV]), t->seq_count);
     if (t->seq_pos + n < length)
         return;
     if (chain.remaining > 1u) {

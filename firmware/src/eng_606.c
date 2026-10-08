@@ -116,6 +116,7 @@ static int k606_render(uint32_t part, float *dry, float *rev, float *dly, uint32
     return 1;
 }
 
+static const uint8_t K606_ORDER[D6_NUM] = {D6_BD, D6_SD, D6_CH, D6_OH, D6_CP, D6_LT, D6_HT, D6_CY};
 static const kit_if_t KIT_606 = {
     .nlanes = D6_NUM,
     .gain = 1.3f,                /* (the snare, hats and clap about the 808's; the 606 kick a little hotter) */
@@ -123,6 +124,8 @@ static const kit_if_t KIT_606 = {
     .nparams = k606_nparams,
     .param = k606_param,
     .lane_of = k606_lane_of,
+    .notes = K606_NOTE,
+    .order = K606_ORDER,
     .init = k606_init,
     .set = k606_set,
     .get = k606_get,

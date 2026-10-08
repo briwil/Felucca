@@ -55,25 +55,35 @@ static int motion_capacity(void)
     bad += check("track clear keeps every other track's events", motion.count == 1u && motion.event[0].place >> 6 == 1u);
     return bad;
 }
+static void play_step0(track_t *t, const step_t *s)   /* CESARI: the step as notes, step 0 entered and fired */
+{
+    static step_t st[NSTEP];
+    memset(st, 0, sizeof st); st[0] = *s;
+    st_load_pat(t, st, 16);
+    t->seq_count = 0; t->seq_pos = 0; t->seq_ev_n = 0;
+    seq_enter(t, div_samples(2)); seq_fire(t, ~0u);
+}
 static int probability_playback(void)
 {
     int bad = 0; ui_power_on(); track_t *t = &trk[0];
     step_t s = {{60, 64, 0, 0}, 2, ST_NOTE, 0, 90, 1u << DV_KICK, 0, 0};
+    uint32_t i, heard = 0;
     bad += check("zero-initialized probability remains legacy 100 percent", step_chance(&s) == 100u);
-    step_set_chance(&s, 0); seq_step(t, &s, div_samples(2), 0);
-    bad += check("zero percent suppresses the whole chord and drum hits", step_chance(&s) == 0u && !t->seq_n);
-    step_set_chance(&s, 100); seq_step(t, &s, div_samples(2), 0);
-    bad += check("100 percent plays all chord notes and drum hits", t->seq_n == 3u);
-    seq_release(t); step_set_chance(&s, 50); uint32_t heard = 0;
-    for (uint32_t i = 0; i < 1000u; i++) { seq_step(t, &s, div_samples(2), 0); heard += t->seq_n != 0; seq_release(t); }
-    bad += check("chance is evaluated each repeat with one decision per step", heard > 350u && heard < 650u);
+    step_set_chance(&s, 0); play_step0(t, &s);
+    bad += check("zero percent: the step's notes are not kept, nothing plays", step_chance(&s) == 0u && !t->pat.n && !t->seq_on_n);
+    seq_release(t);
+    step_set_chance(&s, 100); play_step0(t, &s);
+    bad += check("100 percent plays all chord notes and drum hits", t->seq_on_n == 3u);
+    seq_release(t); step_set_chance(&s, 50); play_step0(t, &s); seq_release(t);
+    for (i = 0; i < 1000u; i++) { t->seq_count = 0; seq_enter(t, div_samples(2)); seq_fire(t, ~0u); heard += seq_sounds(t, 60); seq_release(t); }
+    bad += check("chance is rolled for each note on each repeat", heard > 350u && heard < 650u);
     return bad;
 }
 static int compact_project(void)
 {
     int bad = 0; ui_power_on(); track_t *t = &trk[0];
-    t->step[3] = (step_t){{60, 67}, 2, ST_NOTE, SF_ACCENT, 110, 0x81, 0x80, 0};
-    step_set_chance(&t->step[3], 25); t->p[P_FM1_LEVEL] = 80; t->p[P_ED_FLT] = -50;
+    st_set(t, 3, (step_t){{60, 67}, 2, ST_NOTE, SF_ACCENT, 110, 0x81, 0x80, 0});
+    { uint32_t k; for (k = 0; k < t->pat.n; k++) t->pat.note[k].chance = (uint8_t)chance_of_pct(30); } t->p[P_FM1_LEVEL] = 80; t->p[P_ED_FLT] = -50;
     motion_set_event(t, 3, P_REV, 110);
     project_t before, after; project_store_t packed, corrupt;
     project_capture(&before);
@@ -85,7 +95,8 @@ static int compact_project(void)
     corrupt = packed; corrupt.raw[68] = 255; uint32_t sum = proj_hash(corrupt.raw, sizeof corrupt - 4u);
     memcpy(corrupt.raw + sizeof corrupt - 4u, &sum, 4);
     bad += check("compact parameter range is validated even with a correct hash", !proj_import(&after, &corrupt, sizeof corrupt));
-    corrupt = packed; uint32_t probability_byte = 68u + P_COUNT + 2u + 8u; corrupt.raw[probability_byte] = 127;
+    corrupt = packed; uint32_t probability_byte = 68u + NTRK * (P_COUNT + 2u) + KIT_LANES + 1u + 3u;   /* (track 1's first note: chance 15) */
+    corrupt.raw[probability_byte] = (uint8_t)((corrupt.raw[probability_byte] & ~(31u << 2)) | 15u << 2);
     sum = proj_hash(corrupt.raw, sizeof corrupt - 4u); memcpy(corrupt.raw + sizeof corrupt - 4u, &sum, 4);
     bad += check("invalid probability is refused even with a correct hash", !proj_import(&after, &corrupt, sizeof corrupt));
     project_v6_t old; memset(&old, 0, sizeof old); old.magic = PROJ_MAGIC_V6; old.size = sizeof old;
@@ -101,24 +112,25 @@ static int compact_project(void)
         after.t[0].p[P_E0] == before.t[0].p[P_E0] && after.t[0].p[P_ED_FLT] == -50 &&
         after.t[0].p[P_FM1_LEVEL] == 127 && !after.motion.count && step_chance(&after.t[0].step[3]) == 100u);
     bad += check("migrated FUN6 can be written as fixed-size FUN7", proj_pack(&packed, &after));
-    project_save(1); motion_clear(t); t->p[P_FM1_LEVEL] = 127; step_set_chance(&t->step[3], 100);
+    project_save(1); motion_clear(t); t->p[P_FM1_LEVEL] = 127; { uint32_t k; for (k = 0; k < t->pat.n; k++) t->pat.note[k].chance = 0; }
     project_load(1);
     bad += check("actual project save/load restores motion, chance and operator settings", motion_count(t) == 1u &&
-        step_chance(&t->step[3]) == 25u && t->p[P_FM1_LEVEL] == 80);
+        step_chance(&(*st_of(t, 3))) == 30u && t->p[P_FM1_LEVEL] == 80);
     return bad;
 }
 /* a FUN7 image as the firmware of 89 parameters (before the chord keys P_CHRD / P_VOIC) wrote it: the engine's
  * values at 81..88, motion ids from 81 on for E0..E7 (m: its events as that firmware numbered them) */
 static void pack_fun7_89(project_store_t *out, const project_t *q, const motion_store_t *m)
 {
-    uint8_t *b = out->raw; uint32_t pos = 68u, t, i, magic = PROJ_MAGIC, size = PROJ_STORE_SIZE, sum;
+    uint8_t *b = out->raw; uint32_t pos = 68u, t, i, magic = PROJ_MAGIC_V8, size = PROJ_STORE_SIZE, sum;
     memset(out, 0, sizeof *out); memcpy(b, &magic, 4); memcpy(b + 4, &size, 4);
     memcpy(b + 8, q->g, sizeof q->g); b[62] = q->sel; b[63] = q->parts; b[64] = q->phys; b[66] = 89;
     for (t = 0; t < NTRK; t++) {
         for (i = 0; i < 89u; i++) b[pos++] = (uint8_t)(q->t[t].p[i < 81u ? i : i + 2u] + 64);
         b[pos++] = q->t[t].engine; b[pos++] = q->t[t].preset;
         for (i = 0; i < NSTEP; i++) {
-            const step_t *s = &q->t[t].step[i];
+            step_t v, *s = &v;
+            pat_step_view_k(0, &q->t[t].pat, i, &v);
             memcpy(b + pos, s->note, 4); pos += 4;
             b[pos++] = (uint8_t)(s->n | s->time << 3 | s->flags << 5);
             b[pos++] = s->vel; b[pos++] = s->hit; b[pos++] = s->acc; b[pos++] = s->probability;
@@ -137,7 +149,7 @@ static int fun7_89(void)
         for (i = 0; i < 8u; i++) trk[k].p[P_E0 + i] = (int16_t)(ENGINES[trk[k].eng_req]->edit[i].min + (int16_t)(k + i) %
             (ENGINES[trk[k].eng_req]->edit[i].max - ENGINES[trk[k].eng_req]->edit[i].min + 1));
     t->p[P_FM1_ATK] = 33; t->p[P_REV] = 20;
-    t->step[2] = (step_t){{60, 64, 67}, 3, ST_NOTE, 0, 100};
+    st_set(t, 2, (step_t){{60, 64, 67}, 3, ST_NOTE, 0, 100});
     project_capture(&before);
     memset(&m, 0, sizeof m);                                       /* as the 89-parameter firmware numbered them */
     m.count = 3; m.on = 1;
@@ -152,10 +164,12 @@ static int fun7_89(void)
         ok &= after.t[k].p[P_CHRD] == 0 && after.t[k].p[P_VOIC] == 0;
     }
     bad += check("FUN7 of 89 parameters: E0..E7 at 83..90, the chord keys OFF / CLOSE, the rest in place", ok &&
-        after.t[0].p[P_FM1_ATK] == 33 && !memcmp(after.t[0].step, before.t[0].step, sizeof before.t[0].step));
+        after.t[0].p[P_FM1_ATK] == 33 && pat_sig_of(&after.t[0].pat) == pat_sig_of(&before.t[0].pat) && after.t[0].pat.n == 3u);
     bad += check("  its motion: E0 (81) -> 83, REV and FM OP1 ATK (61) kept",
         after.motion.count == 3u && after.motion.event[0].param == P_REV && after.motion.event[1].param == P_E0 &&
         after.motion.event[1].value == 40 && after.motion.event[2].param == P_FM1_ATK);
+    for (k = 0; k < NTRK; k++) memset(after.t[k].step, 0, sizeof after.t[k].step);   /* (CESARI: the old steps were only staging) */
+    after.sum = proj_sum(&after);
     bad += check("  written again as FUN7 of 91: the same project", proj_pack(&old, &after) && old.raw[66] == P_COUNT &&
         proj_import(&before, &old, sizeof old) && !memcmp(&before, &after, sizeof before));
     pack_fun7_89(&old, &before, &m);                                /* SONG: a slot of the old firmware */
@@ -173,17 +187,17 @@ static int fun7_89(void)
 static int loads_and_song(void)
 {
     int bad = 0; ui_power_on(); track_t *t = &trk[0];
-    t->p[P_REV] = 21; motion_set_event(t, 0, P_REV, 100); t->step[0] = (step_t){{60}, 1, ST_NOTE, 0, 100};
+    t->p[P_REV] = 21; motion_set_event(t, 0, P_REV, 100); st_set(t, 0, (step_t){{60}, 1, ST_NOTE, 0, 100});
     apply_preset_to(t, 1);
-    bad += check("sound load clears incompatible motion and keeps pattern", !motion_count(t) && t->step[0].note[0] == 60);
+    bad += check("sound load clears incompatible motion and keeps pattern", !motion_count(t) && (*st_of(t, 0)).note[0] == 60);
     undo_swap(); bad += check("sound undo restores the original motion pool and base", motion_count(t) == 1u && t->p[P_REV] == 21);
     undo_swap(); bad += check("sound redo restores the loaded motion state", !motion_count(t));
     undo_swap(); project_save(0);
-    t->p[P_REV] = 43; t->step[0].note[0] = 72; chain_config.count = 1; chain_config.row[0] = (chain_row_t){0, 1};
+    t->p[P_REV] = 43; st_set(t, 0, (step_t){{72}, 1, ST_NOTE, 0, 100}); chain_config.count = 1; chain_config.row[0] = (chain_row_t){0, 1};
     bad += check("song preparation imports saved motion alongside steps", chain_prepare() == 0 && chain.source[0].motion.count == 1u);
     seq_start(); seq_tick(t, CTL);
-    bad += check("song plays saved automation with current instruments", chain.running && t->p[P_REV] == 100 && t->step[0].note[0] == 72);
-    seq_stop(); bad += check("song stop restores current base and editable pattern", t->p[P_REV] == 43 && t->step[0].note[0] == 72);
+    bad += check("song plays saved automation with current instruments", chain.running && t->p[P_REV] == 100 && (*st_of(t, 0)).note[0] == 72);
+    seq_stop(); bad += check("song stop restores current base and editable pattern", t->p[P_REV] == 43 && (*st_of(t, 0)).note[0] == 72);
     return bad;
 }
 static int repeat_mode(void)

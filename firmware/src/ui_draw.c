@@ -552,7 +552,7 @@ static void draw_foot(void)
         sig += str_hash(str_hash(act_ready() ? 7u : 3u, ha), hb) + foot_rename() * 7717u;
     }
     if (grid_on())
-        sig += 0x51EDu + (uint32_t)black_held(GK_ACC) * 977u;
+        sig += 0x51EDu + grid_len(t) * 977u + ui.lane * 31u;
     if (!ui.force && sig == ui.foot_sig)
         return;
     ui.foot_sig = sig;
@@ -573,16 +573,13 @@ static void draw_foot(void)
         }
     } else if (grid_on()) {                           /* row 1: the page, and what the keys do */
         char b[16];
-        uint32_t len = (uint32_t)t->p[P_SLEN];
+        uint32_t len = grid_len(t);
         str_cpy(b, "PAGE ", sizeof b);
         fmt_int(b + 5, (int32_t)ui.bank + 1);
         str_cpy(b + str_len(b), "/", 4);
         fmt_int(b + str_len(b), (int32_t)((len + 15u) / 16u));
         cv_text(8, 2, &AF_S, b, T_THEME);
-        if (black_held(GK_ACC))
-            cv_text_r(232, 2, &AF_S, "ACCENT", T_ACCENT, T_BG);
-        else
-            cv_key_hint(232 - kh_w(KC_KEYS, "STEPS"), 2, KC_KEYS, "STEPS", 1, T_BG);   /* the keys are the steps */
+        cv_key_hint(232 - kh_w(KC_KEYS, "STEPS"), 2, KC_KEYS, "STEPS", 1, T_BG);   /* the keys are the steps */
     } else {
         uint32_t i;
         if ((ui.bank + 1u) * 16u <= (uint32_t)t->p[P_SLEN])
@@ -590,13 +587,13 @@ static void draw_foot(void)
         for (i = 0; i < 16u; i++) {                   /* row 1: the cursor's bank, 16 bars in 4 groups */
             uint32_t si = ui.bank * 16u + i;
             int32_t sx = bar_x(i);                    /* (as the PATTERN page's, centred: x 12 .. 228) */
-            const step_t *st = &seq_steps(t)[si];
+            uint32_t kd = pat_step_kind(seq_pat(t), si);
             if (si >= (uint32_t)t->p[P_SLEN])
                 continue;
-            if (step_on(st))                          /* a note: a bar (accented: the accent) */
-                cv_rrect(sx, 1, 9, 11, 2, (st->flags & SF_ACCENT) ? T_ACCENT : T_THEME, T_BG);
-            else                                      /* empty: a stub (a tie: brighter) */
-                cv_rrect(sx, 9, 9, 3, 1, st->time == ST_TIE ? T_MID : T_RAISE, T_BG);
+            if (kd >= 2u)                             /* a note starts: a bar (a loud one: the accent) */
+                cv_rrect(sx, 1, 9, 11, 2, kd == 3u ? T_ACCENT : T_THEME, T_BG);
+            else                                      /* empty: a stub (a note holds over it: brighter) */
+                cv_rrect(sx, 9, 9, 3, 1, kd ? T_MID : T_RAISE, T_BG);
             if (song.seq_mode && si == ui.cursor)
                 cv_rect(sx, 14, 9, 2, T_ACCENT);        /* the step edited */
             else if (song.playing && si == t->seq_idx)
@@ -695,20 +692,6 @@ static void draw_columns(void)
         draw_column(3, "", "", "", T_THEME, -1, ICON_NONE);
         return;
     }
-    if (cur_page()->graph == GR_CHANCE) {              /* STEP CHANCE RATCH: the cursor step's, of all of it */
-        const step_t *cs = &TSEL->step[ui.cursor];
-        int rplays = cs->time == ST_NOTE && (cs->n || cs->hit);   /* RATCH does nothing on a REST, a TIE, empty: DIM */
-        fmt_int(val, (int32_t)ui.cursor + 1);
-        draw_column(0, "STEP", val, "", VAL(0u), -1, ICON_AUTO);
-        fmt_int(val, (int32_t)step_chance(&TSEL->step[ui.cursor]));
-        draw_column(1, "CHANCE", val, "%", VAL(1u), -1, ICON_PROB);   /* the die */
-        val[0] = 'x';                                  /* x1 .. x4 */
-        val[1] = (char)('0' + step_ratchet(&TSEL->step[ui.cursor]));
-        val[2] = 0;
-        draw_column(2, "RATCH", val, "", rplays ? VAL(2u) : T_DIM, -1, ICON_X_REPEAT);
-        draw_column(3, "", "", "", T_THEME, -1, ICON_NONE);
-        return;
-    }
     if (cur_page()->graph == GR_MOTION) {
         draw_column(0, "PLAY", motion_enabled(TSEL) ? "ON" : "OFF", "", VAL(0u), -1, motion_icon());
         fmt_int(val, (int32_t)motion_count(TSEL));
@@ -802,53 +785,38 @@ static void draw_columns(void)
         draw_column(3, "AMT", val, unit, a ? VAL(3u) : T_DIM, RATIO(&TP[id + 2u], a), mod_src_icon(MS_OFF));
         return;
     }
-    if (cur_page()->scope == SC_STEP && drum_track(TSEL)) {   /* CESARI: the grid: - VEL CHANCE LEN */
-        const step_t *st = &seq_steps(TSEL)[ui.cursor];
-        uint32_t on = step_on(st) && st->time == ST_NOTE;
-        char sv[8], sc[8], sl[8];
-        fmt_int(sv, on ? (int32_t)(st->vel ? st->vel : 96u) : 0);
-        fmt_int(sc, (int32_t)step_chance(st));
-        fmt_int(sl, TSEL->p[P_SLEN]);
-        draw_column(0, "", "", "", T_THEME, -1, ICON_NONE);   /* (the white keys are the hits) */
-        draw_column(1, "VEL", on ? sv : "--", "", on ? VAL(1u) : T_DIM, on ? (int32_t)(st->vel ? st->vel : 96u) * 1000 / 127 : -1, ICON_AUTO);
-        draw_column(2, "CHNC", sc, "%", VAL(2u), (int32_t)step_chance(st) * 10, ICON_PROB);
-        draw_column(3, "LEN", sl, "", VAL(3u), -1, ICON_AUTO);
-        return;
-    }
-    if (cur_page()->scope == SC_STEP) {
-        static const char *const TIME_N[3] = {"NOTE", "TIE", "REST"};
-        const step_t *st = &seq_steps(TSEL)[ui.cursor];
-        char u[8];
-        uint32_t cnt = st->n, first = st->note[0], l;
-        for (l = NLANE; l-- > 0;)                         /* (lane hits count as their notes) */
-            if ((st->hit >> l) & 1u) {
-                cnt++;
-                if (!st->n)
-                    first = DRUM_LANE_NOTE[l];
-            }
-        if (cnt) {
-            note_name(val, first);
-            u[0] = 0;
-            if (cnt > 1) {
-                str_cpy(u, "+", 8);
-                fmt_int(u + 1, (int32_t)cnt - 1);
-            }
+    if (cur_page()->scope == SC_STEP) {               /* CESARI: the notes at the cursor (a kit: the drum's) */
+        const track_t *tt = TSEL;
+        const note_t *n = 0;
+        uint32_t i, cnt = 0, drum = drum_track(tt) != 0, steps;
+        char sv[8];
+        const char *u;
+        if (drum) {
+            int32_t j = grid_find(tt, grid_lane(tt), ui.cursor);
+            if (j >= 0) { n = &tt->pat.note[j]; cnt = 1; }
+            steps = grid_len(tt);
         } else {
-            str_cpy(val, "--", 12);
-            u[0] = 0;
+            for (i = 0; i < tt->pat.n; i++)
+                if (tt->pat.note[i].start == ui.cursor) {
+                    if (!n) n = &tt->pat.note[i];
+                    cnt++;
+                }
+            steps = (uint32_t)tt->p[P_SLEN];
         }
-        {
-            static const char *const FLAG_N[4] = {"-", "ACC", "SLD", "A+S"};
-            char sn[8], sl[8];
-            fmt_int(sn, (int32_t)ui.cursor + 1);
-            str_cpy(sl, "/", 8);
-            fmt_int(sl + 1, TSEL->p[P_SLEN]);
-            draw_column(0, "STEP", sn, sl, VAL(0u), -1, ICON_AUTO);
-            draw_column(1, "NOTE", val, u, step_on(st) ? VAL(1u) : T_DIM, -1, ICON_AUTO);
-            draw_column(2, "TIME", TIME_N[st->time % 3u], "", VAL(2u), -1, ICON_AUTO);
-            draw_column(3, "FLAG", FLAG_N[(st->flags & SF_ACCENT ? 1u : 0u) | (st->flags & SF_SLIDE ? 2u : 0u)], "",
-                        VAL(3u), -1, ICON_AUTO);
+        if (drum) {
+            if (n) fmt_int(val, n->nudge);
+            draw_column(0, "NUDGE", n ? val : "--", "", n ? VAL(0u) : T_DIM, -1, ICON_TIME);
+        } else {
+            if (n) fmt_int(val, n->len);
+            draw_column(0, "LEN", n ? val : "--", cnt > 1u ? "+" : "", n ? VAL(0u) : T_DIM, -1, ICON_LENGTH);
         }
+        if (n) fmt_int(sv, n->vel);
+        draw_column(1, "VEL", n ? sv : "--", "", n ? VAL(1u) : T_DIM, n ? (int32_t)n->vel * 1000 / 127 : -1, ICON_LEVEL);
+        if (n) chance_label(n->chance, sv, &u);
+        else u = "";
+        draw_column(2, "CHNC", n ? sv : "--", n ? u : "", n ? VAL(2u) : T_DIM, -1, ICON_PROB);
+        fmt_int(sv, (int32_t)steps);
+        draw_column(3, "STEPS", sv, "", VAL(3u), -1, ICON_STEPS);
         return;
     }
     for (c = 0; c < 4u; c++) {

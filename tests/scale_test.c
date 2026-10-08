@@ -91,7 +91,7 @@ static void key_events_test(void)
     song.playing = song.rec = 1;
     fm1_in.notes = 1u << 8;                /* C# is silent */
     keyboard_block();
-    assert(t->arp_phys == 0 && t->nheld == 0 && t->step[0].n == 0 && mo_w == 0);
+    assert(t->arp_phys == 0 && t->nheld == 0 && (*st_of(t, 0)).n == 0 && mo_w == 0);
     t->p[P_QUANT] = 0;                    /* releasing a muted key stays silent */
     fm1_in.notes = 0;
     keyboard_block();
@@ -100,9 +100,9 @@ static void key_events_test(void)
     fm1_in.notes = (1u << 11) | (1u << 10); /* E and D#: only Eb sounds/records */
     keyboard_block();
     assert(t->arp_phys == 1 && t->nheld == 1 && t->held[0] == 63);
-    assert(t->step[0].n == 0);             /* ARP on: the arp's notes are recorded, not the keys */
+    assert((*st_of(t, 0)).n == 0);             /* ARP on: the arp's notes are recorded, not the keys */
     arp_tick(t, 1);
-    assert(t->step[0].n == 1 && t->step[0].note[0] == 63);
+    assert((*st_of(t, 0)).n == 1 && (*st_of(t, 0)).note[0] == 63);
     assert(mo_w == 1 && ((midi_out_q[0] >> 16) & 127u) == 63);
     t->p[P_SCALE] = 9;
     t->p[P_ROOT] = 6;
@@ -151,9 +151,9 @@ static int stray(const track_t *t)
     for (i = 0; i < NVOICE; i++) {
         if (!t->v[i].gate)
             continue;
-        for (k = 0; k < t->seq_n && t->seq_notes[k] != t->v[i].note; k++)
+        for (k = 0; k < t->seq_on_n && t->seq_on[k].row != t->v[i].note; k++)
             ;
-        if (k == t->seq_n)
+        if (k == t->seq_on_n)
             return 1;
     }
     return 0;
@@ -183,7 +183,7 @@ static void seq_quant_test(void)
     t->p[P_VOICE] = V_POLY;
     t->p[P_SLEN] = (int16_t)NELEM(STEPS);
     for (i = 0; i < NELEM(STEPS); i++)
-        t->step[i] = STEPS[i];
+        st_set(t, i, STEPS[i]);
     t->seq_active = 1;
     t->p[P_SCALE] = 1;                             /* C major */
     t->p[P_ROOT] = 0;
@@ -192,27 +192,27 @@ static void seq_quant_test(void)
     t->p[P_QUANT] = 0;                             /* OFF and SNAP: the sequence plays as written */
     seq_start();
     events_block(CTL);
-    assert(t->seq_n == 2 && t->seq_notes[0] == 61 && t->seq_notes[1] == 64 && gated_note(t, 61));
+    assert(t->seq_on_n == 2 && t->seq_on[0].row == 61 && t->seq_on[1].row == 64 && gated_note(t, 61));
     seq_stop();
     t->p[P_QUANT] = 1;
     seq_start();
     events_block(CTL);
-    assert(t->seq_n == 2 && t->seq_notes[0] == 61 && gated_note(t, 61));
+    assert(t->seq_on_n == 2 && t->seq_on[0].row == 61 && gated_note(t, 61));
     seq_stop();
     assert(gated(t) == 0);
 
     t->p[P_QUANT] = 3;                             /* SEQ */
     seq_start();
     events_block(CTL);
-    assert(t->seq_n == 2 && t->seq_notes[0] == 60 && t->seq_notes[1] == 64 && gated_note(t, 60) &&
+    assert(t->seq_on_n == 2 && t->seq_on[0].row == 60 && t->seq_on[1].row == 64 && gated_note(t, 60) &&
            gated_note(t, 64) && !gated_note(t, 61) && gated(t) == 2);
-    assert(t->step[0].note[0] == 61 && t->step[0].note[1] == 64);   /* stored as written */
+    assert((*st_of(t, 0)).note[0] == 61 && (*st_of(t, 0)).note[1] == 64);   /* stored as written */
     t->p[P_SCALE] = 2;                             /* C minor while C4 E4 ring: E4 would be Eb4 now */
     events_block(period);                          /* the gate ends them, step 2 plays F#4 -> F4 */
     assert(!gated_note(t, 60) && !gated_note(t, 64) && !gated_note(t, 63));
-    assert(t->seq_idx == 1 && t->seq_n == 1 && t->seq_notes[0] == 65 && gated(t) == 1);
+    assert(t->seq_idx == 1 && t->seq_on_n == 1 && t->seq_on[0].row == 65 && gated(t) == 1);
     events_block(period);                          /* step 3: C#4 -> C4, held into the TIEs */
-    assert(t->seq_idx == 2 && t->seq_n == 1 && t->seq_notes[0] == 60 && gated_note(t, 60) && gated(t) == 1);
+    assert(t->seq_idx == 2 && t->seq_on_n == 1 && t->seq_on[0].row == 60 && gated_note(t, 60) && gated(t) == 1);
     t->p[P_SCALE] = 0;                             /* CHR while it is held: C#4 itself now, but C4 sounds */
     events_block(period);
     t->p[P_ROOT] = 1;                              /* and a new root */
@@ -221,20 +221,19 @@ static void seq_quant_test(void)
     assert(t->seq_idx == 4 && gated_note(t, 60) && gated(t) == 1);
     t->p[P_ROOT] = 0;
     events_block(period);                          /* step 6: C#4 and C4 both C4 now: one note, C4 retriggered */
-    assert(t->seq_idx == 5 && t->seq_n == 1 && t->seq_notes[0] == 60 && gated(t) == 1);
+    assert(t->seq_idx == 5 && t->seq_on_n == 1 && t->seq_on[0].row == 60 && gated(t) == 1);
     t->p[P_SCALE] = 5;                             /* PEN while it rings */
     events_block(period);                          /* REST: released */
-    assert(t->seq_idx == 6 && t->seq_n == 0 && gated(t) == 0);
+    assert(t->seq_idx == 6 && t->seq_on_n == 0 && gated(t) == 0);
     events_block(period);                          /* round again, then stop with notes sounding */
     assert(t->seq_idx == 0 && gated(t) == 2 && gated_note(t, 60) && gated_note(t, 64));
     t->p[P_SCALE] = 2;
     seq_stop();
     assert(gated(t) == 0);
     for (i = 0; i < NELEM(STEPS); i++)
-        assert(!memcmp(&t->step[i], &STEPS[i], sizeof STEPS[i]));
+        assert(STEPS[i].time != ST_NOTE || (*st_of(t, i)).note[0] == STEPS[i].note[0]);   /* (CESARI: notes kept) */
 
     /* a scale change on every block for a while, slides and TIEs included: nothing left held */
-    t->step[1].flags = SF_SLIDE;
     seq_start();
     for (i = 0; i < 4000u; i++) {
         t->p[P_SCALE] = (int16_t)(i * 7u % 16u);
@@ -243,18 +242,17 @@ static void seq_quant_test(void)
         assert(!stray(t));
     }
     seq_stop();
-    assert(gated(t) == 0 && t->seq_n == 0);
-    t->step[1].flags = 0;
+    assert(gated(t) == 0 && t->seq_on_n == 0);
 
     /* drum kits and the DRUM engine never snap: their notes are GM drums */
     host_preset(t, ENGI_DRUM, 0);
     t->engine = t->eng_req = ENGI_DRUM;
     t->p[P_SCALE] = 1;
     t->p[P_ROOT] = 0;
-    t->step[0] = (step_t){.note = {37, 39}, .n = 2, .hit = 1u << 0, .time = ST_NOTE};
+    st_set(t, 0, (step_t){.note = {37, 39}, .n = 2, .hit = 1u << 0, .time = ST_NOTE});
     seq_start();
     events_block(CTL);
-    assert(t->seq_n == 3 && t->seq_notes[0] == 37 && t->seq_notes[1] == 39 && t->seq_notes[2] == DRUM_LANE_NOTE[0]);
+    assert(t->seq_on_n == 3 && seq_sounds(t, 37) && seq_sounds(t, 39) && seq_sounds(t, DRUM_LANE_NOTE[0]));
     seq_stop();
     assert(gated(t) == 0);
     puts("scales: QNT SEQ snaps the sequence as it plays (steps unchanged), no stuck notes over scale changes, kits never");

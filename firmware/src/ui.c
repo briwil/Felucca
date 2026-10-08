@@ -88,6 +88,7 @@ static struct {
     uint8_t entry_open;          /* SEQ: keys held since the first press of this entry */
     uint8_t lane;                /* SEQ > STEP on a DRUM track (the grid): the lane the keys and KNOB 3 / 4 edit */
     uint8_t hot_col, hot_t;      /* column whose knob was just turned (drawn white) */
+    uint8_t note_len;            /* CESARI: the length a new note of step entry gets (KNOB 1 last set), 0 = 1 */
     uint8_t kit_back;            /* CESARI: the page EDIT went to the DRUM page from (the grid) + 1, 0 = none */
     uint8_t menu;                /* 0 off, 1 list, 2 about + credits (HOME held) */
     uint8_t menu_sel;            /* MENU: the row (menu_items.c MI_*; its tab MI_TAB), kept while the device runs */
@@ -190,6 +191,8 @@ static uint32_t layer_btn(void);
  * a SLICE track's (ui_slice.c) */
 static int page_visible(uint32_t i)
 {
+    if (PAGES[i].graph == GR_CHANCE)                   /* CESARI: chance is a note's (STEP's KNOB 3) */
+        return 0;
     if (PAGES[i].scope == SC_KIT)                      /* DRUM: a kit engine's drums (kit.c) */
         return kit_page_visible(TSEL, PAGES[i].id[0]);
     if (track_kit(TSEL) && PAGES[i].fam == FAM_EDIT &&  /* a kit: the DRUM page only (CESARI: EDIT 1's KIT ACC */
@@ -273,26 +276,14 @@ static void page_entered(void)
     ui.force = 1;
 }
 
-static int step_on(const step_t *st) { return st->time == ST_NOTE && (st->n || st->hit); }
-
-static void step_clear(step_t *st)
-{
-    st->n = 0;
-    st->time = ST_REST;
-    st->flags = 0;
-    st->vel = 0;
-    st->hit = st->acc = 0;
-    st->probability = 0;
-}
-
 /* ------------------------------------------------------- the DRUM grid --- */
-/* SEQ > STEP on a DRUM track is the grid: 8 lanes x the 16 steps of a page. The white keys are the
- * steps of the page shown (a tap toggles the selected lane there), black keys 1..8 select the lane (and play
- * it), black key 9 held is ACC (white keys toggle accents, their LEDs show them), black keys 10 / 11 the page
- * down / up. KNOB 1 STEP, 2 LANE, 3 HIT, 4 ACC edit the cursor step. A sound load never converts the
- * steps: the grid shows a step's notes on their lanes (eng_drum.c step_lanes) and an edit makes the lane its
- * own (grid_own). Live recording on a DRUM track writes hits (seq.c rec_note) */
-static int grid_on(void) { return !ui.home && !ui.menu && !ui.confirm && cur_page()->graph == GR_ROLL && drum_track(TSEL); }   /* (STEP only: CHANCE is SC_STEP too) */
+/* CESARI: SEQ > STEP on a kit track is the grid: the kit's drums (rows, top down: kit_if_t.order; ui.lane the
+ * selected row) x the 16 steps of a page. A white key adds the selected drum's note on its step of the page, or
+ * deletes the one there; black keys 1..9 select the first nine rows (and play them), 10 / 11 the page down / up;
+ * PRESETS moves the cursor along, ALGORITHM up and down the rows. KNOB 1 NUDGE, 2 VEL, 3 CHANCE of the note at the
+ * cursor, 4 the drum's own LEN. Live recording on a kit track writes notes too (seq.c rec_note) */
+enum { GK_PGDN = 9, GK_PGUP = 10 };              /* black keys 10 / 11; 1..9: the rows */
+static int grid_on(void) { return !ui.home && !ui.menu && !ui.confirm && cur_page()->graph == GR_ROLL && drum_track(TSEL); }
 
 /* black key place p (seq.c key_place) held, 0 = not */
 static int black_held(uint32_t p)
@@ -304,69 +295,38 @@ static int black_held(uint32_t p)
     return 0;
 }
 
-/* lane l of step s from now on is its hit alone: the step's lane notes become hits (nothing sounds different),
- * a note of another pitch on the lane (a low tom 41) becomes the lane's own */
-static void grid_own(step_t *s, uint32_t l)
+static uint32_t grid_rows(const track_t *t) { const kit_if_t *k = note_kit(t); return k ? k->nlanes : 1u; }
+static uint32_t grid_lane(const track_t *t) { return grid_lane_of(note_kit(t), ui.lane); }   /* the selected drum */
+static uint32_t grid_note_row(const track_t *t) { return lane_row(note_kit(t), grid_lane(t)); }   /* .. its note */
+/* the steps the selected drum loops at */
+static uint32_t grid_len(const track_t *t) { return row_len_of(t, &t->pat, grid_note_row(t)); }
+/* the note of drum `lane` starting at step i, -1 = none */
+static int32_t grid_find(const track_t *t, uint32_t lane, uint32_t i)
 {
-    uint32_t k, j = 0;
-    step_to_grid(s);
-    for (k = 0; k < s->n; k++)
-        if (drum_lane(s->note[k]) == l)
-            s->hit |= (uint8_t)(1u << l);
-        else
-            s->note[j++] = s->note[k];
-    for (k = j; k < 4u; k++)
-        s->note[k] = 0;
-    s->n = (uint8_t)j;
+    const kit_if_t *k = note_kit(t);
+    uint32_t j;
+    for (j = 0; j < t->pat.n; j++)
+        if (t->pat.note[j].start == i && note_lane(k, t->pat.note[j].row) == (int32_t)lane)
+            return (int32_t)j;
+    return -1;
 }
-
-/* lane l of step i: on 1, off 0, toggled 2 */
-static void grid_hit(track_t *t, uint32_t i, uint32_t l, uint32_t on)
+/* step i of the selected drum: on 1, off 0, toggled 2 (a new note: velocity 100) */
+static void grid_set(track_t *t, uint32_t i, uint32_t on)
 {
-    step_t *s = &t->step[i % NSTEP];
-    uint32_t b = 1u << (l % NLANE);
+    int32_t j = grid_find(t, grid_lane(t), i);
     if (on == 2u)
-        on = !(step_lanes(s) & b);
-    if (s->time != ST_NOTE) {                    /* a REST or a TIE: an empty step (nothing to turn off) */
-        if (!on)
-            return;
-        step_clear(s);
-        s->time = ST_NOTE;
-    }
-    grid_own(s, l % NLANE);
-    if (on) {
-        s->hit |= (uint8_t)b;
-    } else {
-        s->hit &= (uint8_t)~b;
-        s->acc &= (uint8_t)~b;
-        if (!s->n && !s->hit)
-            step_clear(s);
-    }
+        on = j < 0;
+    if (!on && j >= 0)
+        pat_del(&t->pat, (uint32_t)j);
+    else if (on && j < 0 && pat_add(&t->pat, grid_note_row(t), i, 1u, 100u) < 0)
+        ui_message("PATTERN FULL");
+    t->seq_active = 1;
 }
 
-/* the accent of lane l at step i (on 1, off 0, toggled 2); an accent on an empty lane adds the hit */
-static void grid_acc(track_t *t, uint32_t i, uint32_t l, uint32_t on)
-{
-    step_t *s = &t->step[i % NSTEP];
-    uint32_t b = 1u << (l % NLANE);
-    if (on == 2u)
-        on = !(step_accents(s) & b);
-    if (on)
-        grid_hit(t, i, l, 1);
-    if (!(step_lanes(s) & b))
-        return;
-    grid_own(s, l % NLANE);
-    if (s->flags & SF_ACCENT) {                  /* a step accent: each hit's own from now on */
-        s->acc |= s->hit;
-        s->flags &= (uint8_t)~SF_ACCENT;
-    }
-    s->acc = (uint8_t)(on ? s->acc | b : s->acc & ~b);
-}
-
-/* SEQ cursor: wraps inside the pattern length, the bank follows, a step entry ends */
+/* SEQ cursor: wraps inside the pattern length (the grid: the selected drum's), the bank follows, a step entry ends */
 static void cursor_set(int32_t c)
 {
-    int32_t len = TSEL->p[P_SLEN] > 0 ? TSEL->p[P_SLEN] : 1;
+    int32_t len = grid_on() ? (int32_t)grid_len(TSEL) : TSEL->p[P_SLEN] > 0 ? TSEL->p[P_SLEN] : 1;
     ui.cursor = (uint8_t)((c % len + len) % len);
     ui.bank = (uint8_t)(ui.cursor / 16u);
     ui.entry_open = 0;
@@ -374,8 +334,9 @@ static void cursor_set(int32_t c)
 
 static void cursor_fix(void)                           /* LEN got shorter: onto the last step */
 {
-    if (ui.cursor >= (uint32_t)TSEL->p[P_SLEN])
-        cursor_set(TSEL->p[P_SLEN] - 1);
+    uint32_t len = grid_on() ? grid_len(TSEL) : (uint32_t)TSEL->p[P_SLEN];
+    if (ui.cursor >= len)
+        cursor_set((int32_t)len - 1);
 }
 
 static void note_name(char *b, uint32_t n)
@@ -434,14 +395,7 @@ static void go_home(void)
 }
 
 /* ------------------------------------------------------- track setup --- */
-static int seq_is_empty(const track_t *t)
-{
-    uint32_t i;
-    for (i = 0; i < NSTEP; i++)
-        if (t->step[i].n || t->step[i].hit)
-            return 0;
-    return 1;
-}
+static int seq_is_empty(const track_t *t) { return !t->pat.n; }
 
 /* One-step UNDO of a load. A sound load (a factory or user preset, an engine jump, TOOLS INIT, the
  * editor's PRESET / G_ENGSEL / UP_LOAD) changes the sound only; a pattern load (SEQ > PATTERNS) changes
@@ -460,7 +414,7 @@ static struct {
     uint8_t fm6_slot;            /* the track's FM6 patch and its SLOT (eng_fm6.c): an edited or a project's */
     uint8_t fm6[FP_SIZE + 1u];   /* patch is the track's own, not a factory one */
     int16_t p[P_COUNT];
-    step_t step[NSTEP];
+    pat_t notes;                 /* (CESARI: the notes) */
     motion_store_t motion_backup; /* one track only, swaps with the shared event pool on undo */
     uint32_t after;              /* track_sig right after the last load */
     uint32_t pat;                /* pat_sig[] of the copy */
@@ -479,7 +433,7 @@ static uint32_t fnv(uint32_t h, const void *p, uint32_t n)
         h = (h ^ *b++) * 16777619u;
     return h;
 }
-static uint32_t steps_sig(const track_t *t) { return fnv(2166136261u, t->step, sizeof t->step); }
+static uint32_t steps_sig(const track_t *t) { return pat_sig_of(&t->pat); }
 static uint32_t track_sig(const track_t *t)      /* the sound (an FM6 track's patch too), the steps */
 {
     uint8_t id[3] = {t->eng_req, t->preset, t->user};
@@ -507,7 +461,7 @@ static void load_begin(track_t *t, uint32_t what)
     undo.preset = t->preset;
     undo.user = t->user;
     memcpy(undo.p, t->p, sizeof undo.p);
-    memcpy(undo.step, t->step, sizeof undo.step);
+    undo.notes = t->pat;
     memcpy(undo.fm6, fm6_patch[i], FP_SIZE);
     undo.fm6_slot = fm6_slot[i];
     undo.pat = pat_sig[i];
@@ -588,10 +542,11 @@ static void undo_swap(void)
             t->p[i] = undo.p[i];
             undo.p[i] = v;
         }
-        for (i = 0; i < NSTEP; i++) {
-            step_t s = t->step[i];
-            t->step[i] = undo.step[i];
-            undo.step[i] = s;
+        {
+            static pat_t sw;                       /* (the swap: not on the stack) */
+            sw = t->pat;
+            t->pat = undo.notes;
+            undo.notes = sw;
         }
     }
     fm1_irq_on();
@@ -614,49 +569,51 @@ static void undo_swap(void)
     ui.force = 1;
 }
 
-/* a 16-step pattern (PATTERNS[] format, user presets too) into steps 1..16, the rest empty, LEN 16 */
+/* a 16-step pattern (PATTERNS[] format, user presets too) as notes on steps 1..16, the rest empty, LEN 16 */
 static void load_pat16(track_t *t, const uint8_t *note, const uint8_t *flags)
 {
+    static step_t st[NSTEP];                      /* (the old format: notes.c pat_from_steps) */
     uint32_t i;
-    for (i = 0; i < NSTEP; i++) {
-        step_t *s = &t->step[i];
-        uint8_t n = i < 16u ? note[i] : 0, fl = i < 16u ? flags[i] : 0;
+    memset(st, 0, sizeof st);
+    for (i = 0; i < 16u; i++) {
+        step_t *s = &st[i];
+        uint8_t n = note[i], fl = flags[i];
         s->note[0] = n;
         s->n = n ? 1 : 0;
         s->time = (fl & 4u) ? ST_TIE : n ? ST_NOTE : ST_REST;
-        s->flags = n ? (fl & (SF_ACCENT | SF_SLIDE | SF_RATCH)) : 0;
+        s->flags = n ? (fl & SF_ACCENT) : 0;
         s->vel = n ? 96 : 0;
-        s->hit = s->acc = 0;
-        s->probability = 0;
-        if (drum_track(t))                           /* a DRUM track: the lanes' notes as its grid */
-            step_to_grid(s);
     }
+    for (; i < NSTEP; i++)
+        st[i].time = ST_REST;
     t->p[P_SLEN] = 16;
+    pat_from_steps(&t->pat, st, 16u);
+    t->seq_active = t->pat.n != 0;
 }
 
-/* a 16-step drum grid (user presets of version 3: lane hits, their accents) into steps 1..16, the rest empty,
- * LEN 16 */
+/* a 16-step drum grid (user presets of version 3: lane hits, their accents) as notes on steps 1..16, LEN 16 */
 static void load_grid16(track_t *t, const uint8_t *hit, const uint8_t *acc)
 {
+    static step_t st[NSTEP];
     uint32_t i;
+    memset(st, 0, sizeof st);
     for (i = 0; i < NSTEP; i++) {
-        step_t *s = &t->step[i];
-        step_clear(s);
+        st[i].time = ST_REST;
         if (i < 16u && hit[i]) {
-            s->time = ST_NOTE;
-            s->hit = hit[i];
-            s->acc = acc[i] & hit[i];
+            st[i].time = ST_NOTE;
+            st[i].hit = hit[i];
+            st[i].acc = acc[i] & hit[i];
         }
     }
     t->p[P_SLEN] = 16;
+    pat_from_steps(&t->pat, st, 16u);
+    t->seq_active = t->pat.n != 0;
 }
 
 static void track_defaults_steps(track_t *t)
 {
-    uint32_t i;
     motion_reset(t);
-    for (i = 0; i < NSTEP; i++)
-        step_clear(&t->step[i]);
+    pat_clear(&t->pat);
 }
 
 /* SEQ > PATTERNS: the factory patterns (PATTERNS[], "01".."13"), then the used user presets that hold

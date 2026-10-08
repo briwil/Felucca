@@ -552,7 +552,7 @@ static int test_misc(void)
         int32_t before = 0, during = 0;
         song_setup();
         trk[1].p[P_SLEN] = 1; trk[3].p[P_SLEN] = 1;
-        trk[1].step[0].n = 0; trk[3].step[0].n = 0;          /* only track 1 plays, dry */
+        pat_clear(&trk[1].pat); pat_clear(&trk[3].pat);                  /* only track 1 plays, dry */
         trk[0].p[P_CHOR] = trk[0].p[P_DLY] = trk[0].p[P_REV] = 0;
         transport_req = 1;
         for (f = 0; f < 2u * FS; f += CTL) {

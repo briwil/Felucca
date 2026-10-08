@@ -194,3 +194,4 @@ static const uint8_t TRK_DEF[NPART][3] = {{0, 4, 0}, {ENGI_FM6, 4, 0}, {2, 0, 0}
 static uint32_t trk_def_engine(uint32_t i) { return TRK_DEF[i % NPART][0]; }
 
 #include "kit.c"              /* kit engines: their parameters, memory and mix (core.h kit_if_t) */
+#include "notes.c"            /* CESARI: the sequence as notes (core.h pat_t) */

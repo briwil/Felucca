@@ -76,8 +76,7 @@ static void host_tracks_init(void)                /* as felucca_init: defaults, 
     for (k = 0; k < NTRK; k++) {
         for (i = 0; i < P_E0; i++)
             trk[k].p[i] = TP[i].def;
-        for (i = 0; i < NSTEP; i++)
-            trk[k].step[i].time = ST_REST;
+        pat_clear(&trk[k].pat);                    /* (CESARI: notes) */
     }
     song.master_q12 = 4096;
 }
@@ -146,16 +145,41 @@ static void host_legacy_sample_perc(track_t *t)
 /* the drums of the render tests: DRUM's kit (the power-on track 4; until 1.0.2 these used SAMPLE PERC) */
 static void host_drums(track_t *t) { host_preset(t, ENGI_DRUM, 0); }
 
+/* CESARI: a step as the old format wrote it, into the notes: a NOTE step's notes start there, a TIE holds the
+ * notes ending there one step longer, a REST deletes what starts there (slides are not kept) */
 static void put_step(track_t *t, uint32_t i, uint32_t n, const uint8_t *notes, uint32_t time, uint32_t flags)
 {
-    step_t *s = &t->step[i];
+    step_t s;
     uint32_t k;
-    s->n = (uint8_t)n;
+    memset(&s, 0, sizeof s);
+    s.n = (uint8_t)n;
     for (k = 0; k < 4u; k++)
-        s->note[k] = k < n ? notes[k] : 0;
-    s->time = (uint8_t)time;
-    s->flags = (uint8_t)flags;
-    s->vel = n ? 100 : 0;
+        s.note[k] = k < n ? notes[k] : 0;
+    s.time = (uint8_t)time;
+    s.flags = (uint8_t)flags;
+    s.vel = n ? 100 : 0;
+    if (time == ST_TIE) {
+        for (k = 0; k < t->pat.n; k++)
+            if ((uint32_t)t->pat.note[k].start + t->pat.note[k].len == i)
+                t->pat.note[k].len++;
+        return;
+    }
+    pat_step_set(&t->pat, i, &s);
+    t->seq_active = 1;
+}
+#include "st_helpers.h"
+/* the note of row `row` starting at step i: its length, 0 = none */
+static uint32_t note_len_at(const track_t *t, uint32_t row, uint32_t i)
+{
+    int32_t j = pat_find(&t->pat, row, i);
+    return j < 0 ? 0u : t->pat.note[j].len;
+}
+static uint32_t notes_at(const track_t *t, uint32_t i)   /* how many notes start at step i */
+{
+    uint32_t k, n = 0;
+    for (k = 0; k < t->pat.n; k++)
+        n += t->pat.note[k].start == i;
+    return n;
 }
 
 static uint32_t busy_now(void)                   /* sounding voices of the parts (none fading after a block) */
@@ -298,17 +322,16 @@ static int tracks_demo(const char *dir, const char *name, uint32_t solo)
     if (solo)
         return bmax > NVOICE;
     {
-        const step_t *s4 = &td->step[4], *l1 = &t3->step[1], *p14 = &t2->step[14];
-        /* (DRUM: the clap goes into the grid, its lane's hit, seq.c; a sampled kit took it as a 4th note) */
-        int clap = drum_track(td) ? s4->n == 3u && ((s4->hit >> DV_CLAP) & 1u) : s4->n == 4u && s4->note[3] == 39u;
+        /* (CESARI: notes) */
+        int clap = notes_at(td, 4) == 4u && note_len_at(td, 39, 4);
         int ok_clap = clap && clap_hits == 3u;
-        int ok_lead = l1->n == 1u && l1->note[0] == 84u && l1->time == ST_NOTE;
-        int ok_keys = p14->n == 2u && p14->time == ST_NOTE && p14->note[0] == 60u && p14->note[1] == 64u;
+        int ok_lead = notes_at(t3, 1) == 1u && note_len_at(t3, 84, 1);
+        int ok_keys = notes_at(t2, 14) == 2u && note_len_at(t2, 60, 14) && note_len_at(t2, 64, 14);
         printf("tracks: recording: drums step 4 = %u notes (kick snare hat) + clap 39: %s, hits when step 4 played right "
-               "after: %u (want 3: the clap is not triggered twice) %s\n", s4->n, clap ? "yes" : "no", clap_hits,
+               "after: %u (want 3: the clap is not triggered twice) %s\n", notes_at(td, 4), clap ? "yes" : "no", clap_hits,
                ok_clap ? "ok" : "FAIL");
-        printf("tracks: recording: MIDI ch 3 -> lead step 1 = %u (want 84) %s; keys -> pad step 14 = %u notes %u %u %s\n",
-               l1->note[0], ok_lead ? "ok" : "FAIL", p14->n, p14->note[0], p14->note[1], ok_keys ? "ok" : "FAIL");
+        printf("tracks: recording: MIDI ch 3 -> lead step 1 = 84 %s; keys -> pad step 14 = %u notes %s\n",
+               ok_lead ? "ok" : "FAIL", notes_at(t2, 14), ok_keys ? "ok" : "FAIL");
         printf("tracks: voices sounding at most %u (budget %u) %s; given up to another part %u; %u samples near full "
                "scale\n", bmax, NVOICE, bmax <= NVOICE ? "ok" : "FAIL", voice_kills - kills0, clips);
         fail = !ok_clap + !ok_lead + !ok_keys + (bmax > NVOICE) + (clips > 0);
@@ -557,11 +580,7 @@ static void rec_run_to(track_t *t, uint32_t idx, uint32_t q)
     } while (++guard < 100000u && !(t->seq_idx == idx &&
              t->seq_pos >= step_samples(t, div_samples((uint32_t)t->p[P_SDIV]), idx) * q / 100u));
 }
-static int rec_step_is(const track_t *t, uint32_t i, uint32_t time, uint32_t n, uint32_t note)
-{
-    const step_t *s = &t->step[i];
-    return s->time == time && s->n == n && (!n || s->note[0] == note);
-}
+
 static int rec_test(void)
 {
     track_t *t1 = &trk[0], *t2 = &trk[1], *t3 = &trk[2];
@@ -579,28 +598,27 @@ static int rec_test(void)
     put_step(t1, 5, 1, (const uint8_t[]){48}, ST_NOTE, 0);   /* an older take: put back by an early release */
     song.rec = 0x07u;
     transport_req = 1;
-    /* (a) held 3.3 steps from step 2: 2 NOTE, 3 4 TIE, 5 (released early in it) as before */
+    /* (a) held 3.3 steps from step 2: 3 steps; the older note at 5 stays */
     rec_run_to(t1, 2, 10);
     input_on(t1, 60, 100);
     rec_run_to(t1, 5, 30);
     input_off(t1, 60);
-    ok_len = rec_step_is(t1, 2, ST_NOTE, 1, 60) && rec_step_is(t1, 3, ST_TIE, 0, 0) && rec_step_is(t1, 4, ST_TIE, 0, 0) &&
-             rec_step_is(t1, 5, ST_NOTE, 1, 48);
+    ok_len = note_len_at(t1, 60, 2) == 3u && note_len_at(t1, 48, 5) == 1u;
     /* (b) released after 0.3 step: one step */
     rec_run_to(t1, 8, 5);
     input_on(t1, 62, 100);
     rec_run_to(t1, 8, 35);
     input_off(t1, 62);
     rec_run_to(t1, 9, 50);
-    ok_short = rec_step_is(t1, 8, ST_NOTE, 1, 62) && rec_step_is(t1, 9, ST_REST, 0, 0);
-    /* (c) released past the middle of the next step: tied into it */
+    ok_short = note_len_at(t1, 62, 8) == 1u && !notes_at(t1, 9);
+    /* (c) released past the middle of the next step: two steps */
     rec_run_to(t1, 10, 10);
     input_on(t1, 64, 100);
     rec_run_to(t1, 11, 60);
     input_off(t1, 64);
     rec_run_to(t1, 12, 50);
-    ok_half = rec_step_is(t1, 10, ST_NOTE, 1, 64) && rec_step_is(t1, 11, ST_TIE, 0, 0) && rec_step_is(t1, 12, ST_REST, 0, 0);
-    /* (d) a two-key chord held 2.6 steps: ties until the last key is up */
+    ok_half = note_len_at(t1, 64, 10) == 2u && !notes_at(t1, 12);
+    /* (d) a two-key chord: each note as long as its own key was held (1.2 and 2.6 steps) */
     rec_run_to(t1, 13, 5);
     input_on(t1, 67, 100);
     input_on(t1, 71, 100);
@@ -609,16 +627,14 @@ static int rec_test(void)
     rec_run_to(t1, 15, 60);
     input_off(t1, 71);
     rec_run_to(t1, 0, 10);
-    ok_chord = t1->step[13].n == 2u && rec_step_is(t1, 14, ST_TIE, 0, 0) && rec_step_is(t1, 15, ST_TIE, 0, 0) &&
-               t1->step[0].time != ST_TIE;
-    /* (e) LEN 4, held for 10 steps: the note fills the pattern (3 TIEs), not more */
+    ok_chord = notes_at(t1, 13) == 2u && note_len_at(t1, 67, 13) == 1u && note_len_at(t1, 71, 13) == 3u;
+    /* (e) LEN 4, held for 10 steps: the note fills the pattern (4 steps), not more */
     rec_run_to(t2, 1, 10);
     input_on(t2, 55, 100);
     for (i = 0; i < 10u; i++)
         rec_run_to(t2, (2u + i) % 4u, 50);
     input_off(t2, 55);
-    ok_cap = rec_step_is(t2, 1, ST_NOTE, 1, 55) && rec_step_is(t2, 2, ST_TIE, 0, 0) && rec_step_is(t2, 3, ST_TIE, 0, 0) &&
-             rec_step_is(t2, 0, ST_TIE, 0, 0);
+    ok_cap = note_len_at(t2, 55, 1) == 4u;
     /* (f) SWING 50 %: 0.55 into an even (long) step is before its middle (stays); 0.42 period into an odd
      * (short, 0.8) step is past its middle (the next one) */
     rec_run_to(t3, 4, 46);                         /* 0.46 x 1.2 = 0.55 period */
@@ -627,10 +643,9 @@ static int rec_test(void)
     rec_run_to(t3, 7, 53);                         /* 0.53 x 0.8 = 0.42 period */
     input_on(t3, 74, 100);
     input_off(t3, 74);
-    ok_swing = rec_step_is(t3, 4, ST_NOTE, 1, 72) && t3->step[5].n == 0u && rec_step_is(t3, 8, ST_NOTE, 1, 74) &&
-               t3->step[7].n == 0u;
+    ok_swing = note_len_at(t3, 72, 4) && !notes_at(t3, 5) && note_len_at(t3, 74, 8) && !notes_at(t3, 7);
     /* (g) MONO, legato: A held from step 10, B pressed in step 12 while A is still down, A up, B up late in
-     * 13: 10 A, 11 TIE, 12 B (one note), 13 TIE */
+     * 13: A at 10 two steps, B at 12 two steps */
     rec_run_to(t3, 10, 10);
     input_on(t3, 60, 100);
     rec_run_to(t3, 12, 10);
@@ -640,13 +655,12 @@ static int rec_test(void)
     rec_run_to(t3, 13, 70);
     input_off(t3, 62);
     rec_run_to(t3, 14, 50);
-    ok_mono = rec_step_is(t3, 10, ST_NOTE, 1, 60) && rec_step_is(t3, 11, ST_TIE, 0, 0) && rec_step_is(t3, 12, ST_NOTE, 1, 62) &&
-              rec_step_is(t3, 13, ST_TIE, 0, 0) && t3->step[14].time != ST_TIE;
-    printf("tracks: recording lengths: held 3.3 steps -> NOTE TIE TIE (the 4th step put back) %s; 0.3 step -> one "
-           "step %s; past the middle of the next -> NOTE TIE %s\n", ok_len ? "ok" : "FAIL", ok_short ? "ok" : "FAIL",
+    ok_mono = note_len_at(t3, 60, 10) == 2u && note_len_at(t3, 62, 12) == 2u && !notes_at(t3, 14);
+    printf("tracks: recording lengths: held 3.3 steps -> 3 steps %s; 0.3 step -> one "
+           "step %s; past the middle of the next -> 2 steps %s\n", ok_len ? "ok" : "FAIL", ok_short ? "ok" : "FAIL",
            ok_half ? "ok" : "FAIL");
-    printf("tracks: recording lengths: a chord ties until its last key %s; capped at LEN 4 %s; MONO legato A..B -> "
-           "A TIE B TIE %s\n", ok_chord ? "ok" : "FAIL", ok_cap ? "ok" : "FAIL", ok_mono ? "ok" : "FAIL");
+    printf("tracks: recording lengths: a chord's notes as long as each key %s; capped at LEN 4 %s; MONO legato A..B -> "
+           "A 2 B 2 %s\n", ok_chord ? "ok" : "FAIL", ok_cap ? "ok" : "FAIL", ok_mono ? "ok" : "FAIL");
     printf("tracks: recording with SWING 50 %%: nearest swung step (0.55 into a long step stays, 0.42 into a short "
            "one moves on) %s\n", ok_swing ? "ok" : "FAIL");
     fail = !ok_len + !ok_short + !ok_half + !ok_chord + !ok_cap + !ok_mono + !ok_swing;
@@ -706,7 +720,7 @@ static int trs_test(void)
     trs_bytes((const uint8_t[]){0xF8}, 1);
     trs_bytes((const uint8_t[]){0x92, 72, 100}, 3);
     trs_bytes((const uint8_t[]){0x92, 72, 0}, 3);
-    ok_rec = trk[2].step[0].n == 1u && trk[2].step[0].note[0] == 72u && trk[2].step[0].time == ST_NOTE && trk[1].step[0].n == 0u;
+    ok_rec = notes_at(&trk[2], 0) == 1u && note_len_at(&trk[2], 72, 0) && !notes_at(&trk[1], 0);
     printf("tracks: TRS MIDI IN: ch 1..4 -> parts %s, ch 10 and ch 5 ignored on CH1-4, the selected track on SEL %s %s; note-offs "
            "(running status, vel 0) %s\n", ok_parts ? "ok" : "FAIL", ok_ch10 ? "ok" : "FAIL", ok_sel ? "ok" : "FAIL",
            ok_off ? "ok" : "FAIL");

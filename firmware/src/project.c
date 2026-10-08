@@ -58,7 +58,8 @@
  *
  * Built on the Mac too (tests/project_test.c, -DPROJ_HOST): the part above the #ifndef
  * PROJ_HOST needs core.h, params.c (TP) and engines.c. */
-#define PROJ_MAGIC 0x46554E38u                 /* "FUN8": FUN7 + the tracks' FM6 patches */
+#define PROJ_MAGIC 0x46554E39u                 /* "FUN9" (CESARI): FUN8 with notes for steps (notes.c) */
+#define PROJ_MAGIC_V8 0x46554E38u              /* "FUN8": FUN7 + the tracks' FM6 patches; read only */
 #define PROJ_MAGIC_V7 0x46554E37u              /* "FUN7": serialized (byte params, packed steps), chain, motion */
 #define PROJ_MAGIC_V6 0x46554E36u              /* FUN6: 69 parameters, drum grid, chain */
 #define PROJ_MAGIC_V5 0x46554E35u              /* "FUN5": the grid, without the chain; read only */
@@ -75,7 +76,8 @@
 typedef struct {                               /* one track */
     int16_t p[P_COUNT];
     uint8_t engine, preset;
-    step_t step[NSTEP];
+    pat_t pat;                                 /* (CESARI) its notes */
+    step_t step[NSTEP];                        /* (an older format's steps, read: pat_from_steps; never saved) */
 } proj_trk_t;
 typedef struct {
     uint32_t magic, size;
@@ -446,9 +448,34 @@ static int proj_import(project_t *q, const void *b, int n)
     proj_perc(q);
     return 1;
 }
+static int proj_unpack9(project_t *q, const uint8_t *b);
+static int proj_import_steps(project_t *q, const void *b, int n);
+/* CESARI: the older formats hold steps: their notes (notes.c pat_from_steps) */
+static void proj_steps_to_notes(project_t *q)
+{
+    uint32_t k;
+    for (k = 0; k < NTRK; k++)
+        pat_from_steps(&q->t[k].pat, q->t[k].step, q->t[k].p[P_SLEN] > 0 ? (uint32_t)q->t[k].p[P_SLEN] : 1u);
+    q->sum = proj_sum(q);
+}
 static int proj_import_any(project_t *q, const void *b, int n)
 {
     if (n == PROJ_STORE_SIZE && ((const uint32_t *)b)[0] == PROJ_MAGIC)
+        return proj_unpack9(q, b);
+    if (n == (int)sizeof *q && proj_ok((const project_t *)b)) {
+        memcpy(q, b, sizeof *q);
+        proj_drums_to_part(q);
+        proj_phys(q);
+        return 1;
+    }
+    if (!proj_import_steps(q, b, n))
+        return 0;
+    proj_steps_to_notes(q);
+    return 1;
+}
+static int proj_import_steps(project_t *q, const void *b, int n)
+{
+    if (n == PROJ_STORE_SIZE && ((const uint32_t *)b)[0] == PROJ_MAGIC_V8)
         return proj_unpack(q, b, PROJ_STORE_SIZE);
     if (n == PROJ_STORE_SIZE && ((const uint32_t *)b)[1] >= 8u && ((const uint32_t *)b)[1] < PROJ_STORE_SIZE)
         n = (int)((const uint32_t *)b)[1];      /* a retained slot holding an older, shorter record: its own size
@@ -519,6 +546,7 @@ static uint32_t proj_name_get(char *d, const uint8_t *s)   /* its length */
 
 /* A stable serialized schema: first header retains FUN6's fields; at byte66
  * np, format flags, then four byte-param tracks and nine-byte steps; FUN8: the patches at PROJ_FM6_OFF. */
+static void note_pack(const note_t *n, uint8_t *b);
 static int proj_pack(project_store_t *out, const project_t *q)
 {
     uint8_t *b = out->raw; uint32_t pos = 68u, t, i; uint32_t magic = PROJ_MAGIC, size = PROJ_STORE_SIZE, sum;
@@ -534,16 +562,16 @@ static int proj_pack(project_store_t *out, const project_t *q)
             b[pos++] = (uint8_t)(q->t[t].p[i] + 64);
         }
         b[pos++] = q->t[t].engine; b[pos++] = q->t[t].preset;
-        for (i = 0; i < NSTEP; i++) {
-            const step_t *s = &q->t[t].step[i];
-            uint32_t r = step_ratchet(s) - 1u;          /* RATCH: bit 7 of the velocity and chance bytes (see the top) */
-            if (s->n > 4u || s->time > ST_REST || (s->flags & ~(3u | SF_RATCH)) || s->probability > 101u) return 0;
-            for (uint32_t j = 0; j < 4u; j++)           /* what proj_unpack checks, so a saved project always loads: */
-                b[pos++] = s->note[j] > 127u ? 127u : s->note[j];   /* notes and velocity 0..127, accents */
-            b[pos++] = (uint8_t)(s->n | s->time << 3 | (s->flags & 3u) << 5);   /* only on hits */
-            b[pos++] = (uint8_t)((s->vel > 127u ? 127u : s->vel) | (r & 1u) << 7); b[pos++] = s->hit;
-            b[pos++] = s->acc & s->hit;
-            b[pos++] = (uint8_t)(s->probability | (r >> 1) << 7);
+    }
+    for (t = 0; t < NTRK; t++) {                        /* CESARI: each track's lanes' lengths and notes */
+        const pat_t *pt = &q->t[t].pat;
+        if (pt->n > NNOTE || pos + KIT_LANES + 1u + pt->n * 5u > PROJ_FM6_OFF) return 0;
+        for (i = 0; i < KIT_LANES; i++)
+            b[pos++] = pt->lane_len[i] > NSTEP ? 0u : pt->lane_len[i];
+        b[pos++] = (uint8_t)pt->n;
+        for (i = 0; i < pt->n; i++) {
+            note_pack(&pt->note[i], b + pos);
+            pos += 5u;
         }
     }
     if (pos + sizeof q->chain + sizeof q->motion > PROJ_FM6_OFF) return 0;
@@ -567,13 +595,88 @@ static void proj_motion_ids(motion_store_t *m, uint32_t np)
         if (np < P_COUNT && m->event[i].param >= np - 8u && m->event[i].param < np)
             m->event[i].param = (uint8_t)(m->event[i].param + P_COUNT - np);
 }
+/* CESARI: a note in 5 bytes: row 7 bits, start 6, length - 1 6, velocity 7, chance 5, nudge + 11 5 */
+static void note_pack(const note_t *in, uint8_t *b)
+{
+    note_t one = *in;                                   /* (out of range: inside it) */
+    const note_t *n = &one;
+    if (one.row > 127u) one.row = 127u;
+    note_bound(&one);
+    uint64_t v = (uint64_t)(n->row & 127u) | (uint64_t)(n->start & 63u) << 7 | (uint64_t)((n->len - 1u) & 63u) << 13 |
+                 (uint64_t)(n->vel & 127u) << 19 | (uint64_t)(n->chance & 31u) << 26 |
+                 (uint64_t)((uint32_t)(n->nudge + NUDGE_MAX) & 31u) << 31;
+    uint32_t i;
+    for (i = 0; i < 5u; i++)
+        b[i] = (uint8_t)(v >> (8u * i));
+}
+static void note_unpack(note_t *n, const uint8_t *b)
+{
+    uint64_t v = 0;
+    uint32_t i;
+    for (i = 0; i < 5u; i++)
+        v |= (uint64_t)b[i] << (8u * i);
+    n->row = (uint8_t)(v & 127u);
+    n->start = (uint8_t)((v >> 7) & 63u);
+    n->len = (uint8_t)(((v >> 13) & 63u) + 1u);
+    n->vel = (uint8_t)((v >> 19) & 127u);
+    n->chance = (uint8_t)((v >> 26) & 31u);
+    n->nudge = (int8_t)((int32_t)((v >> 31) & 31u) - NUDGE_MAX);
+}
+/* a stored FUN9: FUN8's header, parameters, chain, motion, patches and name; notes for steps */
+static int proj_unpack9(project_t *q, const uint8_t *b)
+{
+    uint32_t pos = 68u, t, i, magic, size, sum, np = b[66], name_off = PROJ_NAME_OFF;
+    memcpy(&magic, b, 4); memcpy(&size, b + 4, 4); memcpy(&sum, b + PROJ_STORE_SIZE - 4u, 4);
+    if (magic != PROJ_MAGIC || size != PROJ_STORE_SIZE || sum != proj_hash(b, PROJ_STORE_SIZE - 4u) || np < 8u ||
+        np > P_COUNT || 68u + NTRK * (np + 2u + KIT_LANES + 1u) + sizeof q->chain + sizeof q->motion > PROJ_FM6_OFF)
+        return 0;
+    memset(q, 0, sizeof *q); q->magic = PROJ_MAGIC; q->size = sizeof *q;
+    memcpy(q->g, b + 8, sizeof q->g); q->sel = b[62]; q->parts = b[63]; q->phys = b[64];
+    for (t = 0; t < NTRK; t++) {
+        int16_t values[P_COUNT], def[P_COUNT];
+        for (i = 0; i < np; i++) { if (b[pos] > 191u) return 0; values[i] = (int16_t)b[pos++] - 64; }
+        q->t[t].engine = b[pos++]; q->t[t].preset = b[pos++];
+        for (i = 0; i < P_COUNT; i++) def[i] = param_desc_of(q->t[t].engine % NENGINES, i)->def;
+        params_by_count(q->t[t].p, values, np, def);
+    }
+    for (t = 0; t < NTRK; t++) {
+        pat_t *pt = &q->t[t].pat;
+        uint32_t n;
+        if (pos + KIT_LANES + 1u > PROJ_FM6_OFF) return 0;
+        for (i = 0; i < KIT_LANES; i++)
+            if ((pt->lane_len[i] = b[pos++]) > NSTEP) return 0;
+        n = b[pos++];
+        if (n > NNOTE || pos + n * 5u > PROJ_FM6_OFF) return 0;
+        for (i = 0; i < n; i++, pos += 5u) {            /* (a note out of range: not a project of ours) */
+            note_t *nt = &pt->note[i];
+            note_unpack(nt, b + pos);
+            if (!nt->vel || !chance_ok(nt->chance) || nt->nudge < -NUDGE_MAX || nt->nudge > NUDGE_MAX) return 0;
+        }
+        pt->n = (uint16_t)n;
+        pat_bound(pt);
+    }
+    if (pos + sizeof q->chain + sizeof q->motion > PROJ_FM6_OFF) return 0;
+    memcpy(&q->chain, b + pos, sizeof q->chain); pos += sizeof q->chain;
+    memcpy(&q->motion, b + pos, sizeof q->motion);
+    proj_motion_ids(&q->motion, np);
+    if (!chain_valid(&q->chain) || !motion_valid(&q->motion)) return 0;
+    for (t = 0; t < NTRK; t++)
+        for (i = 0; i < FM6_PACKED; i++)
+            q->fm6[t][i] = b[PROJ_FM6_OFF + t * FM6_PACKED + i] & 0x7Fu;
+    {
+        char nm[PROJ_NAME_LEN + 1u];
+        memcpy(q->name, nm, proj_name_get(nm, b + name_off));
+    }
+    q->sum = proj_sum(q); proj_drums_to_part(q); proj_phys(q);
+    return 1;
+}
 /* a stored FUN8 (st = PROJ_STORE_SIZE) or FUN7 (PROJ_STORE_V7: no patches, the init one) */
 static int proj_unpack(project_t *q, const uint8_t *b, uint32_t st)
 {
     uint32_t pos = 68u, t, i, magic, size, sum, np = b[66], v7 = st == PROJ_STORE_V7;
     uint32_t name_off = st - 4u - PROJ_NAME_LEN, end = v7 ? name_off : name_off - NTRK * FM6_PACKED;
     memcpy(&magic, b, 4); memcpy(&size, b + 4, 4); memcpy(&sum, b + st - 4u, 4);
-    if (magic != (v7 ? PROJ_MAGIC_V7 : PROJ_MAGIC) || size != st || sum != proj_hash(b, st - 4u) ||
+    if (magic != (v7 ? PROJ_MAGIC_V7 : PROJ_MAGIC_V8) || size != st || sum != proj_hash(b, st - 4u) ||
         np < 8u || np > P_COUNT || 68u + NTRK * (np + 2u + NSTEP * 9u) + sizeof q->chain + sizeof q->motion > end)
         return 0;
     memset(q, 0, sizeof *q); q->magic = PROJ_MAGIC; q->size = sizeof *q;
@@ -672,6 +775,7 @@ static void proj_bound(project_t *q)
 {
     uint32_t t, i;
     for (t = 0; t < NTRK; t++) {
+        pat_bound(&q->t[t].pat);
         proj_steps(q->t[t].step);
         for (i = 0; i < NSTEP; i++) {
             step_t *s = &q->t[t].step[i];
@@ -722,7 +826,7 @@ static void project_capture(project_t *p)
         for (uint32_t j = 0; j < P_COUNT; j++) p->t[i].p[j] = motion_base_value(&trk[i], j);
         p->t[i].engine = trk[i].eng_req;
         p->t[i].preset = trk[i].preset;
-        memcpy(p->t[i].step, trk[i].step, sizeof trk[i].step);
+        p->t[i].pat = trk[i].pat;                       /* (CESARI: its notes) */
         if (track_kit(&trk[i]))                         /* a kit: its drums' values in the patch's place (kit.c) */
             kit_pack(&trk[i], p->fm6[i]);
         else
@@ -851,8 +955,8 @@ static int project_restore_runtime(const project_t *input)
             t->p[i] = (int16_t)param_fit(d, s->p[i]);
         }
         t->preset = (uint8_t)(ENGINES[e]->npresets ? (s->preset >= PROJ_DEF_KEEP ? 0u : s->preset) % ENGINES[e]->npresets : 0u);
-        memcpy(t->step, s->step, sizeof t->step);
-        proj_steps(t->step);
+        t->pat = s->pat;                                /* (CESARI: its notes) */
+        pat_bound(&t->pat);
         if (ENGINES[e]->kit)                            /* a kit: its drums' values (kit.c) */
             kit_unpack(t, p->fm6[k]);
         else {   /* the project's own FM6 patch, never reloaded from SLOT: F n if it is that factory patch, else OWN */
@@ -883,7 +987,7 @@ static int project_restore_runtime(const project_t *input)
                 t->p[i] = TP[i].def;
             fm1_irq_on();
         }
-        pat_sig[k] = ~steps_sig(t);                     /* a project's steps are the user's */
+        pat_sig[k] = ~steps_sig(t);                     /* a project's notes are the user's */
     }
     undo_depth--;
     sync_reload = 1;
@@ -982,8 +1086,8 @@ static uint32_t chain_prepare(void)
                 m->count = (uint8_t)n;
             }
             for (k = 0; k < NTRK; k++) {
-                memcpy(chain.source[i].step[k], p->t[k].step, sizeof p->t[k].step);
-                proj_steps(chain.source[i].step[k]);
+                chain.source[i].pat[k] = p->t[k].pat;   /* (CESARI: its notes) */
+                pat_bound(&chain.source[i].pat[k]);
                 for (j = 0; j < 4u; j++)
                     chain.source[i].timing[k][j] = (int16_t)clamp(p->t[k].p[P_SLEN + j],
                         TP[P_SLEN + j].min, TP[P_SLEN + j].max);

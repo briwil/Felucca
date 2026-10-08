@@ -573,8 +573,10 @@ static void state(void)                          /* a playing song with steps on
     song.g[G_BPM] = 124;
     for (i = 0; i < NTRK; i++) trk[i].seq_idx = 5;
     my_steps(&trk[1]);
-    trk[0].step[2].flags |= SF_ACCENT;
-    trk[0].step[6].flags |= SF_SLIDE;
+    {                                             /* (an accent on step 2) */
+        step_t a = *st_of(&trk[0], 2);
+        if (a.time == ST_NOTE) { a.flags |= SF_ACCENT; a.vel = 127; st_set(&trk[0], 2, a); }
+    }
 #if FELUCCA_SLICE
     if (usr_nz[0]) {                              /* (slices_usr filled USR1: empty again) */
         memset(host_slots, 0, sizeof host_slots);
@@ -586,14 +588,13 @@ static void state(void)                          /* a playing song with steps on
         scope_buf[i] = (int16_t)((int32_t)((i * 37u) % 128u) * 200 - 12800 + (int32_t)((i % 32u) < 16u ? 3000 : -3000));
     scope_w = 0;
 }
-static void drum(uint32_t kit)
+static void drum_pat(track_t *t)                   /* the drum scenes' pattern on a kit track */
 {
+    static step_t st[NSTEP];
     uint32_t i;
-    song.sel = 3;
-    trk[3].p[P_E0] = (int16_t)kit;
+    memset(st, 0, sizeof st);
     for (i = 0; i < 16u; i++) {
-        step_t *s = &trk[3].step[i];
-        memset(s, 0, sizeof *s);
+        step_t *s = &st[i];
         s->time = ST_NOTE; s->vel = 100;
         if (i % 4u == 0u) s->hit |= 1u;
         if (i == 4u || i == 12u) s->hit |= 2u, s->acc |= 2u;
@@ -604,6 +605,14 @@ static void drum(uint32_t kit)
         if (i == 3u) s->hit |= 64u;
         if (i == 0u) s->hit |= 128u, s->acc |= 128u;
     }
+    st_load_pat(t, st, 16);
+}
+static void drum(uint32_t kit)
+{
+    uint32_t i;
+    song.sel = 3;
+    trk[3].p[P_E0] = (int16_t)kit;
+    drum_pat(&trk[3]);
     trk[3].p[P_SLEN] = 32;
 }
 static void eng(uint32_t e) { set_engine_of(TSEL, e); }
@@ -671,19 +680,7 @@ static void mock_state(int s)
     for (i = 0; i < NTRK; i++) trk[i].seq_idx = 5;
     load_pat16(&trk[0], PATTERNS[0].note, PATTERNS[0].flags);
     load_pat16(&trk[1], PATTERNS[4].note, PATTERNS[4].flags);
-    for (i = 0; i < 16u; i++) {
-        step_t *st = &trk[3].step[i];
-        memset(st, 0, sizeof *st);
-        st->time = ST_NOTE; st->vel = 100;
-        if (i % 4u == 0u) st->hit |= 1u;
-        if (i == 4u || i == 12u) st->hit |= 2u, st->acc |= 2u;
-        if (i == 10u) st->hit |= 4u;
-        if (i % 2u == 0u) st->hit |= 8u;
-        if (i == 14u) st->hit |= 16u;
-        if (i == 7u || i == 15u) st->hit |= 32u;
-        if (i == 3u) st->hit |= 64u;
-        if (i == 0u) st->hit |= 128u, st->acc |= 128u;
-    }
+    drum_pat(&trk[3]);
     trk[3].p[P_SLEN] = 32;
     switch (s) {
     case S_MOCK_HOME: ui.home = 1; ui.hot_col = 1; ui.hot_t = 30; break;
@@ -710,6 +707,7 @@ static void mock_state(int s)
  * A minor; POLY chords (Am7 F C G, tied); a line with ties, slides and accents in C major; LEN 32 on its second
  * page, playing; high (A6..) and low (C-1..) notes; a page wider than the view (edge marks); ACID playing with a
  * key held (A3, its row lit) */
+static step_t roll_st[NSTEP];
 static void step_put(step_t *st, uint32_t time, uint32_t flags, uint32_t n, const uint8_t *notes)
 {
     uint32_t j;
@@ -746,11 +744,12 @@ static void roll_scene(int s)
         for (i = 0; i < 16u; i++) {
             const uint8_t *c = i / 4u == 0u ? AM7 : i / 4u == 1u ? FM7 : i / 4u == 2u ? CMA : GMA;
             uint32_t n = i / 4u == 2u ? 3u : 4u;
-            if (i % 4u == 0u) step_put(&t->step[i], ST_NOTE, i == 8u ? SF_ACCENT : 0u, n, c);
-            else if (i % 4u == 1u) step_put(&t->step[i], ST_TIE, 0, 0, c);
-            else if (i % 4u == 2u) step_put(&t->step[i], ST_NOTE, 0, n, c);
-            else step_put(&t->step[i], ST_REST, 0, 0, c);
+            if (i % 4u == 0u) step_put(&roll_st[i], ST_NOTE, i == 8u ? SF_ACCENT : 0u, n, c);
+            else if (i % 4u == 1u) step_put(&roll_st[i], ST_TIE, 0, 0, c);
+            else if (i % 4u == 2u) step_put(&roll_st[i], ST_NOTE, 0, n, c);
+            else step_put(&roll_st[i], ST_REST, 0, 0, c);
         }
+        st_load_pat(t, roll_st, 16);
         ui.cursor = 4;
         break;
     case S_ROLL_TIES:
@@ -758,10 +757,10 @@ static void roll_scene(int s)
         for (i = 0; i < 16u; i++) {
             uint8_t n = LINE[i];
             uint32_t f = (i == 3u || i == 9u ? SF_SLIDE : 0u) | (i == 0u || i == 8u || i == 13u ? SF_ACCENT : 0u);
-            if (LINE_T[i] == 0u) step_put(&t->step[i], ST_NOTE, f, 1, &n);
-            else step_put(&t->step[i], LINE_T[i] == 1u ? ST_TIE : ST_REST, 0, 0, &n);
+            if (LINE_T[i] == 0u) step_put(&roll_st[i], ST_NOTE, f, 1, &n);
+            else step_put(&roll_st[i], LINE_T[i] == 1u ? ST_TIE : ST_REST, 0, 0, &n);
         }
-        t->step[2].flags |= SF_SLIDE;                  /* (slides into a note, from before a tie) */
+        st_load_pat(t, roll_st, 16);
         ui.cursor = 9;
         break;
     case S_ROLL_LEN32:
@@ -769,7 +768,7 @@ static void roll_scene(int s)
         t->p[P_SLEN] = 32;
         for (i = 16; i < 32u; i++) {
             uint8_t n = (uint8_t)(60 + (i * 5u) % 12u);
-            if (i % 3u != 2u) step_put(&t->step[i], ST_NOTE, i % 8u == 0u ? SF_ACCENT : 0u, 1, &n);
+            if (i % 3u != 2u) step_put(&roll_st[i], ST_NOTE, i % 8u == 0u ? SF_ACCENT : 0u, 1, &n);
         }
         ui.cursor = 20; song.playing = 1; t->seq_idx = 22;
         break;
@@ -777,7 +776,7 @@ static void roll_scene(int s)
     case S_ROLL_LOW:
         for (i = 0; i < 16u; i += 2u) {
             uint8_t n = (uint8_t)(s == S_ROLL_HIGH ? 112 + (i * 7u) % 15u : (i * 7u) % 15u);
-            step_put(&t->step[i], ST_NOTE, 0, 1, &n);
+            step_put(&roll_st[i], ST_NOTE, 0, 1, &n);
         }
         ui.cursor = 2;
         break;
@@ -785,7 +784,7 @@ static void roll_scene(int s)
         t->p[P_VOICE] = V_POLY;
         for (i = 0; i < 16u; i += 2u) {
             uint8_t n[2] = {(uint8_t)(36 + i), (uint8_t)(72 + i)};
-            step_put(&t->step[i], ST_NOTE, 0, 2, n);
+            step_put(&roll_st[i], ST_NOTE, 0, 2, n);
         }
         ui.cursor = 4;
         break;
@@ -824,7 +823,7 @@ static void setup(int s)
         break;
     case S_STEP: song.rec = 1; go_page(GR_ROLL); ui.cursor = 6; break;
     case S_PATTERN: go_title("PATTERN"); ui.cursor = 3; break;
-    case S_CHANCE: go_page(GR_CHANCE); step_set_chance(&TSEL->step[0], 65); break;
+    case S_CHANCE: go_page(GR_ROLL); if (TSEL->pat.n) TSEL->pat.note[0].chance = 6; break;
     case S_MOTION: go_page(GR_MOTION); break;
     case S_DRUM: drum(0); go_page(GR_ROLL); ui.cursor = 4; ui.lane = 1; trk[3].seq_idx = 9; break;
     case S_DRUM_HAND: drum(1); go_page(GR_ROLL); ui.lane = 5; ui.cursor = 7; break;

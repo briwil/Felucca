@@ -236,47 +236,50 @@ static int steps(void)
     uint32_t n, ok = 1;
     int bad = 0;
     reset();
-    TSEL->step[0].hit = TSEL->step[0].acc = 0x80;
+    set_engine_of(TSEL, ENGI_606);                 /* (CESARI: lane hits are a drum track's notes) */
+    st_set(TSEL, 0, (step_t){.hit = 0x80, .acc = 0x80, .time = ST_NOTE});
     bad += check("legacy 8-byte step writes preserve lane data",
-                 request(ED_STEP_SET, a, 9) == 20u && TSEL->step[0].note[0] == 60 &&
-                 TSEL->step[0].hit == 0x80 && TSEL->step[0].acc == 0x80);
+                 request(ED_STEP_SET, a, 9) == 20u && (*st_of(TSEL, 0)).note[0] == 60 &&
+                 (*st_of(TSEL, 0)).hit == 0x80 && (*st_of(TSEL, 0)).acc == 0x80);
     bad += check("full grid step writes preserve high lane bits and constrain accents",
-                 request(ED_STEP_SET, a, 12) == 20u && TSEL->step[0].hit == 0x92 && TSEL->step[0].acc == 2);
-    before = TSEL->step[0]; a[2] = 71;
+                 (a[7] = 0, request(ED_STEP_SET, a, 12) == 20u) && (*st_of(TSEL, 0)).hit == 0x92 && (*st_of(TSEL, 0)).acc == 2 &&
+                 (a[7] = SF_ACCENT, request(ED_STEP_SET, a, 12) == 20u) && (*st_of(TSEL, 0)).acc == 0x92);   /* (an accented step: every hit) */
+    before = (*st_of(TSEL, 0)); a[2] = 71;
     for (n = 2; n <= sizeof a; n++) {
         if (n == 9u || n == 12u || n == 13u) continue;   /* (14: a[13], the ratchet, 0 is refused) */
-        ok &= !request(ED_STEP_SET, a, n) && !memcmp(&before, &TSEL->step[0], sizeof before);
+        ok &= !request(ED_STEP_SET, a, n) && !memcmp(&before, &(*st_of(TSEL, 0)), sizeof before);
     }
     bad += check("partial or oversized step payloads never mutate a valid step", ok);
     a[0] = 1; a[1] = 0; memcpy(a + 2, (const uint8_t[]){1,64,0,0,0,ST_NOTE,0,99}, 8);
     bad += check("TRACK_STEP accepts its legacy payload on an unselected track",
-                 request(ED_TRACK_STEP, a, 10) == 21u && trk[1].step[0].note[0] == 64 && song.sel == 0);
-    before = trk[1].step[0]; a[3] = 65;
+                 request(ED_TRACK_STEP, a, 10) == 21u && (*st_of(&trk[1], 0)).note[0] == 64 && song.sel == 0);
+    before = (*st_of(&trk[1], 0)); a[3] = 65;
     bad += check("TRACK_STEP rejects an incomplete grid extension",
-                 !request(ED_TRACK_STEP, a, 11) && !memcmp(&before, &trk[1].step[0], sizeof before));
+                 !request(ED_TRACK_STEP, a, 11) && !memcmp(&before, &(*st_of(&trk[1], 0)), sizeof before));
     /* RATCH (INFO 52 01 04): the hits 1..4 after the chance; the flags byte stays accent | slide both ways */
     memcpy(a, (const uint8_t[]){0, 1, 60, 0, 0, 0, ST_NOTE, SF_ACCENT, 100, 0, 0, 0, 80, 3}, 14);
     n = request(ED_STEP_SET, a, 14);
-    bad += check("STEP_SET with the ratchet: x3 kept, replied after the chance, flags without it",
-                 n == 20u && step_ratchet(&TSEL->step[0]) == 3u && step_chance(&TSEL->step[0]) == 80u &&
-                 host_wire[n - 2] == 3 && host_wire[n - 3] == 80 && host_wire[12] == SF_ACCENT);
+    /* CESARI: notes have no ratchets or slides: a ratchet is taken and the step plays x1 */
+    bad += check("STEP_SET with the ratchet: taken (x1: notes have none), the chance kept and replied, flags without it",
+                 n == 20u && step_ratchet(&(*st_of(TSEL, 0))) == 1u && step_chance(&(*st_of(TSEL, 0))) == 80u &&
+                 host_wire[n - 2] == 1 && host_wire[n - 3] == 80 && host_wire[12] == SF_ACCENT);
     a[7] = SF_SLIDE; n = request(ED_STEP_SET, a, 13);
-    ok = n == 20u && step_ratchet(&TSEL->step[0]) == 3u && TSEL->step[0].flags == (SF_SLIDE | 2u << SF_RATCH_SH);
+    ok = n == 20u && step_ratchet(&(*st_of(TSEL, 0))) == 1u && !((*st_of(TSEL, 0)).flags & SF_SLIDE);
     n = request(ED_STEP_SET, a, 9);
-    bad += check("STEP_SET without the ratchet (an older editor) keeps the step's own",
-                 ok && n == 20u && step_ratchet(&TSEL->step[0]) == 3u);
-    before = TSEL->step[0]; ok = 1;
+    bad += check("STEP_SET without the ratchet (an older editor), a slide: the step x1, no slide",
+                 ok && n == 20u && step_ratchet(&(*st_of(TSEL, 0))) == 1u);
+    before = (*st_of(TSEL, 0)); ok = 1;
     for (n = 0; n < 8u; n++) {
         a[13] = (uint8_t)(n < 4u ? 0u : 5u + n);
-        ok &= !request(ED_STEP_SET, a, 14) && !memcmp(&before, &TSEL->step[0], sizeof before);
+        ok &= !request(ED_STEP_SET, a, 14) && !memcmp(&before, &(*st_of(TSEL, 0)), sizeof before);
     }
     bad += check("STEP_SET refuses a ratchet outside 1..4 and leaves the step", ok);
     memcpy(a, (const uint8_t[]){1, 2, 1, 64, 0, 0, 0, ST_NOTE, 0, 99, 0, 0, 0, 100, 4}, 15);
     n = request(ED_TRACK_STEP, a, 15);
-    ok = n == 21u && step_ratchet(&trk[1].step[2]) == 4u && host_wire[n - 2] == 4;
+    ok = n == 21u && step_ratchet(&(*st_of(&trk[1], 2))) == 1u && host_wire[n - 2] == 1;
     a[14] = 1; n = request(ED_TRACK_STEP, a, 15);
-    bad += check("TRACK_STEP sets the ratchet of any track (x4, then back to x1)",
-                 ok && n == 21u && step_ratchet(&trk[1].step[2]) == 1u && !(trk[1].step[2].flags & SF_RATCH));
+    bad += check("TRACK_STEP takes the ratchet of any track (x1: notes have none)",
+                 ok && n == 21u && step_ratchet(&(*st_of(&trk[1], 2))) == 1u && !((*st_of(&trk[1], 2)).flags & SF_RATCH));
     return bad;
 }
 

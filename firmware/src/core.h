@@ -204,6 +204,8 @@ typedef struct kit_if {
     uint32_t (*nparams)(uint32_t lane);
     const kit_param_t *(*param)(uint32_t lane, uint32_t i);
     int32_t (*lane_of)(uint32_t note);          /* the drum a MIDI / GM note plays, -1 = none */
+    const uint8_t *notes;                        /* CESARI: each drum's own note (its GM note): what a note plays */
+    const uint8_t *order;                        /* CESARI: the grid's rows, top down: their drums (nlanes of them) */
     void (*init)(uint32_t part);                 /* the part's state from scratch (its memory is zeroed first) */
     void (*set)(uint32_t part, uint32_t lane, uint32_t i, int32_t v);   /* a pot (audio context only) */
     int32_t (*get)(uint32_t part, uint32_t lane, uint32_t i);
@@ -290,6 +292,30 @@ typedef struct {
     chain_row_t row[CHAIN_ROWS];
 } chain_config_t;
 
+/* CESARI: the sequence is notes (notes.c), not steps: each note starts on a step, nudged earlier or later, and has
+ * its own length, velocity and chance. A row is a MIDI note (a drum's: its GM note); a kit's drums loop at their
+ * own lengths. step_t stays as the old formats' (projects, user presets, factory patterns: notes.c pat_from_steps) */
+#define NNOTE 192                /* notes a track's pattern holds */
+#define NUDGE_MAX 11             /* a note's nudge: -11..11 twenty-fourths of a step */
+typedef struct {
+    uint8_t row;                 /* MIDI note */
+    uint8_t start;               /* its step, 0..NSTEP - 1 */
+    uint8_t len;                 /* steps, 1..NSTEP */
+    uint8_t vel;                 /* 1..127 */
+    uint8_t chance;              /* 0 = always; 1..9 = 10..90 %; 20 + k: loop condition k (notes.c NOTE_COND) */
+    int8_t nudge;                /* twenty-fourths of a step, + late */
+} note_t;
+typedef struct {
+    uint16_t n;                  /* notes in use: note[0 .. n - 1] */
+    uint8_t lane_len[KIT_LANES]; /* a kit's drum l loops at this many steps; 0 = the pattern's LEN */
+    note_t note[NNOTE];
+} pat_t;
+#define SEQ_EV 16
+#define SEQ_FRESH 0xFFFFFFFFu     /* track_t.seq_pos: PLAY (or a song's next row) starts step 0 on the next block */
+#define SEQ_ON 16
+typedef struct { uint32_t at, dur; uint8_t row, vel; } seq_ev_t;   /* due at sample `at` of the step, for dur */
+typedef struct { uint32_t left; uint8_t row; } seq_on_t;
+
 typedef struct track {
     int16_t p[P_COUNT];
     uint8_t engine, preset;      /* engine: what the audio ISR renders */
@@ -311,25 +337,24 @@ typedef struct track {
     uint32_t arp_idx;
     uint8_t arp_note;            /* sounding arp note, 0 = none */
     uint32_t arp_off;            /* q8 sample time of its note-off */
-    /* sequencer */
-    step_t step[NSTEP];
-    uint32_t seq_pos;            /* q8 samples into the current step */
-    uint16_t seq_idx;
-    uint8_t seq_notes[4 + NLANE];   /* sounding seq notes (the step's notes, then its hits) */
-    uint8_t seq_n;
-    uint8_t seq_hold;            /* last step slides: keep the notes until the next step */
-    uint8_t slide_glide;         /* next legato note glides (slide) */
-    uint8_t rat_left;            /* RATCH: repeats of the playing step still to come (seq.c seq_ratchet) */
-    uint32_t seq_off;
-    uint8_t seq_active;          /* any step programmed */
-    uint8_t rskip_idx;           /* live recording put notes into the step about to play: */
-    uint8_t rskip_n, rskip[NLANE];   /* do not trigger them again there (they sound already) */
-    /* live recording of held notes (seq.c rec_hold): the steps they are held into become TIEs */
-    uint8_t rh_n, rh_note[4];    /* recorded notes still held, 0 = none */
-    uint8_t rh_start;            /* the step they were recorded into */
-    uint8_t rh_ties;             /* TIE steps written after it */
-    uint8_t rh_last;             /* the last of them; rh_bak: what it held (an early release puts it back) */
-    step_t rh_bak;
+    /* sequencer (CESARI: notes, notes.c) */
+    pat_t pat;
+    uint32_t seq_pos;            /* samples into the current step */
+    uint16_t seq_idx;            /* the step playing, of the pattern's LEN (seq_count's remainder) */
+    uint8_t slide_glide;         /* next legato note glides (slide; CESARI: nothing sets it now) */
+    uint8_t seq_active;          /* any note programmed */
+    uint32_t seq_count;          /* CESARI: steps entered since PLAY (each row's place: its length's remainder) */
+    uint8_t seq_ev_n;            /* notes due inside the step playing (nudged; seq.c seq_due) */
+    seq_ev_t seq_ev[SEQ_EV];
+    uint8_t seq_on_n;            /* sequenced notes sounding, and the samples to their note-off */
+    seq_on_t seq_on[SEQ_ON];
+    uint8_t rskip_n;             /* live recording put these notes into the step about to play: not again there */
+    uint8_t rskip[SEQ_EV];       /* (their rows; rskip_at: that step's seq_count) */
+    uint32_t rskip_at;
+    /* live recording (seq.c rec_note): the notes still held, their note's index, the place they started */
+    uint8_t rh_n, rh_note[4];
+    uint16_t rh_idx[4];
+    uint32_t rh_t0[4];           /* in 1/256 steps since PLAY */
     /* mono */
     uint8_t mono_stack[8];
     uint8_t nmono;

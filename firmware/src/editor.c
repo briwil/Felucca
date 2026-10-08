@@ -145,6 +145,13 @@ static struct {
 } ed_w;
 
 static int16_t *ed_val(uint32_t i) { return i < P_COUNT ? &TSEL->p[i] : &song.g[i - P_COUNT]; }
+/* CESARI: the editor's STEP protocol sees the notes as the old steps (notes.c pat_step_view / pat_step_set) */
+static const step_t *ed_view(const track_t *t, uint32_t i)
+{
+    static step_t v;
+    pat_step_view(t, seq_pat(t), i % NSTEP, &v);
+    return &v;
+}
 static uint32_t ed_step_sig(const step_t *s)
 {
     return ((uint32_t)s->note[0] | (uint32_t)s->note[1] << 7 | (uint32_t)s->note[2] << 14 | (uint32_t)s->note[3] << 21) ^
@@ -157,7 +164,7 @@ static void ed_shadow(void)                              /* the editor is in syn
     for (i = 0; i < ED_NV; i++)
         ed_w.v[i] = *ed_val(i);
     for (i = 0; i < NSTEP; i++)
-        ed_w.st[i] = ed_step_sig(&seq_steps(TSEL)[i]);
+        ed_w.st[i] = ed_step_sig(ed_view(TSEL, i));
     for (i = 0; i < ED_NT; i++)
         ed_w.tv[i] = trk[i / 3u].p[ED_TIDS[i % 3u]];
     ed_w.eng = (uint8_t)ed_eng(TSEL);
@@ -223,7 +230,7 @@ static void ed_sync(void)                                /* main loop */
         return;
     }
     for (i = 0; i < NSTEP && n < ED_PUSH_MAX; i++) {
-        uint32_t h = ed_step_sig(&seq_steps(TSEL)[i]);
+        uint32_t h = ed_step_sig(ed_view(TSEL, i));
         if (h == ed_w.st[i])
             continue;
         if (!ed_room())
@@ -493,16 +500,18 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         break;
     case ED_STEP_GET:
     case ED_STEP_SET: {
-        step_t *st;
+        step_t st;
         if (na < 1u || a[0] >= NSTEP)
             return;
-        st = &TSEL->step[a[0]];
+        st = *ed_view(TSEL, a[0]);
         if (cmd == ED_STEP_SET && na >= 9u && !chain_busy()) {
-            ed_step_put(st, a + 1, na - 1u);
+            ed_step_put(&st, a + 1, na - 1u);
+            pat_step_set(&TSEL->pat, a[0], &st);
+            TSEL->seq_active = 1;
         }
-        ed_w.st[a[0]] = ed_step_sig(&seq_steps(TSEL)[a[0]]);
+        ed_w.st[a[0]] = ed_step_sig(ed_view(TSEL, a[0]));
         ed_b(a[0]);
-        ed_step_reply(&seq_steps(TSEL)[a[0]]);
+        ed_step_reply(ed_view(TSEL, a[0]));
         break;
     }
     case ED_PRESET: {                                      /* engine, preset */
@@ -770,17 +779,20 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             ed_v(motion_base_value(&trk[a[0]], i));
         break;
     case ED_TRACK_STEP: {                                  /* track, index [, step] -> track, index, step (as STEP_GET) */
-        step_t *st;
+        step_t st;
         if (na < 2u || a[0] >= NTRK || a[1] >= NSTEP)
             return;
-        st = &trk[a[0]].step[a[1]];
-        if (na >= 10u && !chain_busy())
-            ed_step_put(st, a + 2, na - 2u);
+        st = *ed_view(&trk[a[0]], a[1]);
+        if (na >= 10u && !chain_busy()) {
+            ed_step_put(&st, a + 2, na - 2u);
+            pat_step_set(&trk[a[0]].pat, a[1], &st);
+            trk[a[0]].seq_active = 1;
+        }
         if (a[0] == song.sel)
-            ed_w.st[a[1]] = ed_step_sig(&seq_steps(&trk[a[0]])[a[1]]);
+            ed_w.st[a[1]] = ed_step_sig(ed_view(&trk[a[0]], a[1]));
         ed_b(a[0]);
         ed_b(a[1]);
-        ed_step_reply(&seq_steps(&trk[a[0]])[a[1]]);
+        ed_step_reply(ed_view(&trk[a[0]], a[1]));
         break;
     }
     case ED_TRACK_PARAM: {                                 /* track, id [, v14] -> track, id, v14 */

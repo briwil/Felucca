@@ -68,8 +68,8 @@ static void graph_lfo(const track_t *t, uint16_t c)
  * the row centred: x 12 .. 228 */
 static int32_t bar_x(uint32_t i) { return 12 + (int32_t)(i % 16u) * 13 + (int32_t)(i % 16u / 4u) * 4; }
 
-/* PATTERN page: the 64 steps as 4 rows of 16 bars (an accent: the accent colour, a tie: a lower bar,
- * empty: a stub), the cursor and the playhead under them */
+/* PATTERN page: the 64 steps as 4 rows of 16 bars (a note starting: a bar, a loud one the accent colour; a note
+ * holding over: a lower bar; empty: a stub), the cursor and the playhead under them (CESARI: from the notes) */
 static void graph_steps(const track_t *t, uint16_t c)
 {
     uint32_t i, len = (uint32_t)t->p[P_SLEN];
@@ -77,14 +77,15 @@ static void graph_steps(const track_t *t, uint16_t c)
     int32_t bh = sm ? 10 : 14, pitch = sm ? 14 : 24, y0 = sm ? 2 : 4;
     for (i = 0; i < NSTEP; i++) {
         int32_t x = bar_x(i), y = y0 + (int32_t)(i / 16u) * pitch;
-        const step_t *st = &seq_steps(t)[i];
+        uint32_t kd;
         if (i >= len)
             continue;
+        kd = pat_step_kind(seq_pat(t), i);
         if (i % 16u == 0u && i + 16u <= len)
             GFX_HOOK_ALIGN(0, 0, 240, 0, AL_H | AL_CELLS | AL_N(16), "step bars' row centred");
-        if (step_on(st))
-            cv_rrect(x, y, 9, bh, 2, (st->flags & SF_ACCENT) ? T_ACCENT : c, T_SURF);
-        else if (st->time == ST_TIE)
+        if (kd >= 2u)
+            cv_rrect(x, y, 9, bh, 2, kd == 3u ? T_ACCENT : c, T_SURF);
+        else if (kd)
             cv_rrect(x, y + bh - 6, 9, 6, 1, T_MID, T_SURF);
         else
             cv_rrect(x, y + bh - 3, 9, 3, 1, T_RAISE, T_SURF);
@@ -118,19 +119,6 @@ static struct {
 } proll;
 static const uint8_t KEY_BLACK[12] = {0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0};
 
-static int32_t pr_note(const step_t *st, uint32_t j)   /* the step's note j (0..3), then its lane hits (-1: none) */
-{
-    if (j < 4u)
-        return j < st->n ? st->note[j] : -1;
-    return (st->hit >> (j - 4u)) & 1u ? DRUM_LANE_NOTE[j - 4u] : -1;
-}
-static uint32_t pr_src(const track_t *t, uint32_t si, uint32_t len)   /* the step whose notes sound at si (NSTEP: none) */
-{
-    uint32_t k;
-    for (k = 0; k < len && seq_steps(t)[si].time == ST_TIE; k++)
-        si = (si + len - 1u) % len;
-    return step_on(&seq_steps(t)[si]) ? si : NSTEP;
-}
 /* the rows lit by keys held on the selected track (bit r: row r from the top) */
 static uint32_t pr_held(void)
 {
@@ -144,33 +132,36 @@ static uint32_t pr_held(void)
             }
     return m;
 }
+/* a note sounds somewhere in the page's columns base .. base + ncol - 1 */
+static int pr_in_page(const note_t *n, uint32_t base, uint32_t ncol)
+{
+    return n->start < base + ncol && (uint32_t)n->start + n->len > base;
+}
 /* once a frame: the view toward the page's notes (centred; once there it stays while they fit); at once on a redraw
  * forced, a gap in the frames, another track or MENU > ANIM OFF */
 static void pr_follow(const track_t *t)
 {
-    uint32_t i, j, len = (uint32_t)t->p[P_SLEN], base = ui.bank * 16u;
-    int32_t lo = 127, hi = -1, tgt, d, cur = proll.lo;
+    const pat_t *p = seq_pat(t);
+    uint32_t i, len = (uint32_t)t->p[P_SLEN], base = ui.bank * 16u, ncol = base < len ? (len - base < 16u ? len - base : 16u) : 0u;
+    int32_t lo = 127, hi = -1, tgt, d, cur = proll.lo, at = -1;
     int snap = ui.force || !proll.init || proll.trk != song.sel || ui.frame != proll.frame + 1u || (ui_prefs & PREF_ANIM_OFF);
     if (proll.init && proll.frame == ui.frame)
         return;
-    for (i = 0; i < 16u && base + i < len; i++) {
-        uint32_t s = pr_src(t, base + i, len);
-        for (j = 0; s < NSTEP && j < 4u + NLANE; j++) {
-            int32_t n = pr_note(&seq_steps(t)[s], j);
-            if (n < 0)
-                continue;
-            lo = n < lo ? n : lo;
-            hi = n > hi ? n : hi;
-        }
+    for (i = 0; i < p->n; i++) {
+        const note_t *n = &p->note[i];
+        if (!pr_in_page(n, base, ncol))
+            continue;
+        lo = n->row < lo ? n->row : lo;
+        hi = n->row > hi ? n->row : hi;
+        if (n->start == ui.cursor && (at < 0 || n->row < at))
+            at = n->row;
     }
     if (hi < 0)
         lo = hi = last_note;
     if (hi - lo <= PR_ROWS - 1)                     /* all fit: centred, then kept while they fit */
         tgt = !snap && !proll.moving && lo >= cur && hi <= cur + PR_ROWS - 1 ? cur : (lo + hi + 1) / 2 - PR_ROWS / 2;
-    else {                                            /* too wide: the cursor's (lowest) note in the middle */
-        const step_t *st = &seq_steps(t)[ui.cursor];
-        tgt = (st->n ? st->note[0] : (lo + hi) / 2) - PR_ROWS / 2;
-    }
+    else                                            /* too wide: the cursor's (lowest) note in the middle */
+        tgt = (at >= 0 ? at : (lo + hi) / 2) - PR_ROWS / 2;
     tgt = clamp(tgt, 0, 128 - PR_ROWS);
     d = tgt - cur;
     proll.lo = (uint8_t)(snap ? tgt : cur + (d / 3 ? d / 3 : d > 0 ? 1 : d < 0 ? -1 : 0));
@@ -180,44 +171,11 @@ static void pr_follow(const track_t *t)
     proll.init = 1;
 }
 static int32_t pr_row_y(int32_t n) { return PR_Y0 + ((int32_t)proll.lo + PR_ROWS - 1 - n) * PR_RH; }
-/* a bar w px wide in `hits` equal parts, 1 px apart (a RATCH step; 1: the bar) */
-static void pr_split(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c, uint32_t hits)
-{
-    int32_t k, pw = (w - (int32_t)hits + 1) / (int32_t)hits;
-    if (hits < 2u) {
-        cv_rect(x, y, w, h, c);
-        return;
-    }
-    for (k = 0; k < (int32_t)hits; k++)
-        cv_rect(x + k * (pw + 1), y, pw, h, c);
-}
-/* the bars of step s in column x (in its RATCH parts, hits; a TIE's carried bars: 1): a 1 px edge mark for a note
- * out of view; first: row y of the step's first note */
-static void pr_bars(const step_t *st, int32_t x, int32_t w, uint16_t c, int acc_all, int32_t *first, uint32_t hits)
-{
-    uint32_t j;
-    int32_t ybot = PR_Y0 + PR_ROWS * PR_RH;
-    for (j = 0; j < 4u + NLANE; j++) {
-        int32_t n = pr_note(st, j), y;
-        int acc;
-        if (n < 0)
-            continue;
-        acc = acc_all || (j >= 4u && ((st->acc >> (j - 4u)) & 1u));
-        y = pr_row_y(n);
-        if (*first < -1000)
-            *first = y;
-        if (y < PR_Y0)
-            pr_split(x, PR_Y0, w, 1, c, hits);
-        else if (y >= ybot)
-            pr_split(x, ybot - 1, w, 1, c, hits);
-        else if (acc)
-            pr_split(x, y, w, PR_RH, c == T_ACCENT ? c : T_TEXT, hits);
-        else
-            pr_split(x, y + 1, w, PR_RH - 2, c, hits);
-    }
-}
+/* CESARI: the piano roll draws notes: a bar from its step (nudged) over its length, the row's height when loud
+ * (velocity 120 and up), hollow when it has a chance or a condition; the cursor step's notes ACCENT */
 static void graph_roll(const track_t *t, uint16_t c)
 {
+    const pat_t *p = seq_pat(t);
     uint32_t i, len = (uint32_t)t->p[P_SLEN], base = ui.bank * 16u, ncol, mask = scale_mask(t), held = pr_held();
     int32_t r, ybot = PR_Y0 + PR_ROWS * PR_RH, gw;
     char nb[8];
@@ -255,60 +213,71 @@ static void graph_roll(const track_t *t, uint16_t c)
         if (song.playing && si == t->seq_idx)
             cv_rect(x + 6, PR_Y0, 1, ybot - PR_Y0, T_ACCENT);
     }
-    for (i = 0; i < ncol; i++) {                      /* the notes */
-        uint32_t si = base + i, s = pr_src(t, si, len), nx = (si + 1u) % len;
-        const step_t *st, *ns = &seq_steps(t)[nx];
-        int32_t x = PR_X0 + (int32_t)i * PR_CW, y = -10000;
+    for (i = 0; i < p->n; i++) {                      /* the notes */
+        const note_t *n = &p->note[i];
+        int32_t x0, x1, y = pr_row_y(n->row);
         uint16_t col;
-        if (s == NSTEP)
-            continue;                                 /* a REST, empty, or a TIE after one */
-        st = &seq_steps(t)[s];
-        col = s == ui.cursor || si == ui.cursor ? T_ACCENT : c;
-        if (s == si)
-            pr_bars(st, x + 2, 9, col, (st->flags & SF_ACCENT) != 0u, &y, step_ratchet(st));
-        else                                          /* a TIE: the bars on through the gap before */
-            pr_bars(st, x - 1, 12, col, (st->flags & SF_ACCENT) != 0u, &y, 1u);
-        if ((st->flags & SF_SLIDE) && step_ratchet(st) == 1u &&   /* (a ratcheted step never slides out) */
-            ns->time == ST_NOTE && ns->n && y >= PR_Y0 && y < ybot) {
-            int32_t ny = clamp(pr_row_y(ns->note[0]), PR_Y0, ybot - PR_RH);
-            cv_line(x + 10, y + 2, x + 14, ny + 2, T_TEXT);   /* the slide into the next note */
-        }
+        if (n->start >= len || !pr_in_page(n, base, ncol))
+            continue;
+        x0 = PR_X0 + ((int32_t)n->start - (int32_t)base) * PR_CW + 2 + n->nudge * PR_CW / 24;
+        x1 = PR_X0 + ((int32_t)n->start + (int32_t)n->len - (int32_t)base) * PR_CW - 1 + n->nudge * PR_CW / 24;
+        x0 = x0 < PR_X0 + 1 ? PR_X0 + 1 : x0;
+        x1 = x1 > PR_X0 + gw - 1 ? PR_X0 + gw - 1 : x1;
+        if (x1 <= x0)
+            continue;
+        col = n->start == ui.cursor ? T_ACCENT : n->vel >= 120u ? T_TEXT : c;
+        if (y < PR_Y0)
+            cv_rect(x0, PR_Y0, x1 - x0, 1, col);
+        else if (y >= ybot)
+            cv_rect(x0, ybot - 1, x1 - x0, 1, col);
+        else if (n->chance)
+            cv_frame(x0, y, x1 - x0, PR_RH, col);
+        else if (n->vel >= 120u)
+            cv_rect(x0, y, x1 - x0, PR_RH, col);
+        else
+            cv_rect(x0, y + 1, x1 - x0, PR_RH - 2, col);
     }
 }
-/* SEQ > STEP on a DRUM track: the grid, 8 lanes x the 16 steps of the page shown. Lanes by their two-letter
- * names (BD SD CP CH OH TM RS CB; CG CL CY on the other kits). A hit is a rounded square (accented: the
- * accent; a RATCH step's: its 2..4 parts as bars), an empty step a dot (brighter on the beats and on the selected lane); the selected lane is
- * underlaid RAISE, the cursor framed in TEXT; a TEXT bar over the step playing */
+/* CESARI: SEQ > STEP on a kit track: the grid, 8 of the kit's rows (the selected one in view) x the 16 steps of the
+ * page shown, each row as long as its drum loops (past it: nothing). A note is a rounded square, nudged a little
+ * left or right (loud: the accent; soft, under 64: MID; with a chance or a condition: hollow); an empty step a dot
+ * (brighter on the beats and on the selected row); the selected row underlaid RAISE, the cursor framed in TEXT;
+ * playing, a TEXT mark over each row's own step */
 static void graph_grid(const track_t *t, uint16_t c)
 {
-    uint32_t l, i, len = (uint32_t)t->p[P_SLEN], base = ui.bank * 16u;
+    const kit_if_t *k = note_kit(t);
+    const pat_t *p = seq_pat(t);
+    uint32_t r, i, rows = grid_rows(t), base = ui.bank * 16u, top = ui.lane < 8u ? 0u : ui.lane - 7u;
     int32_t y0 = 6;
-    for (l = 0; l < NLANE; l++) {
-        int32_t y = y0 + 4 + (int32_t)l * 14;
-        int sel = l == ui.lane;
-        uint16_t row = sel ? T_RAISE : T_SURF;
+    for (r = 0; r < 8u && top + r < rows; r++) {
+        uint32_t gr = top + r, lane = grid_lane_of(k, gr), row = lane_row(k, lane), len = row_len_of(t, p, row);
+        int32_t y = y0 + 4 + (int32_t)r * 14;
+        int sel = gr == ui.lane;
+        uint16_t bg = sel ? T_RAISE : T_SURF;
         if (sel) {
             GFX_HOOK_ALIGN(0, 0, 240, 0, AL_H | AL_CELLS, "drum lane fill centred");
             cv_rrect(6, y, 228, 14, 3, T_RAISE, T_SURF);   /* (6 .. 234, as a list row; the hits 40 .. 230) */
         }
         GFX_HOOK_ALIGN(0, y + 2, 0, y + 12, AL_V, "drum lane label on its hits' line");
-        cv_text_on(10, y - 1, &AF_S, drum_lane_abbr(t, l), sel ? T_ACCENT : T_MID, row);   /* ink rows 2 .. 11, as the hits */
+        cv_text_on(10, y - 1, &AF_S, k ? k->lanes[lane].name : "--", sel ? T_ACCENT : T_MID, bg);
         for (i = 0; i < 16u && base + i < len; i++) {
-            const step_t *st = &seq_steps(t)[base + i];
-            uint32_t b = 1u << l;
-            int32_t x = 40 + (int32_t)i * 12;
-            if ((step_lanes(st) & b) && step_ratchet(st) > 1u)
-                pr_split(x, y + 2, 10, 10, (step_accents(st) & b) ? T_ACCENT : c, step_ratchet(st));
-            else if (step_lanes(st) & b)
-                cv_rrect(x, y + 2, 10, 10, 2, (step_accents(st) & b) ? T_ACCENT : c, row);
-            else
+            int32_t x = 40 + (int32_t)i * 12, j = grid_find(t, lane, base + i);
+            if (j >= 0) {
+                const note_t *n = &p->note[j];
+                int32_t dx = n->nudge * 5 / NUDGE_MAX;
+                uint16_t col = n->vel >= 120u ? T_ACCENT : n->vel < 64u ? T_MID : c;
+                if (n->chance)
+                    cv_frame(x + dx, y + 2, 10, 10, col);
+                else
+                    cv_rrect(x + dx, y + 2, 10, 10, 2, col, bg);
+            } else
                 cv_rect(x + 4, y + 6, 2, 2, i % 4u == 0u || sel ? T_MID : T_DIM);
             if (sel && base + i == ui.cursor)          /* the cursor: a 1 px frame */
                 cv_frame(x - 1, y + 1, 12, 12, T_TEXT);
         }
+        if (song.playing && (t->seq_count % len) / 16u == ui.bank)
+            cv_rect(40 + (int32_t)((t->seq_count % len) % 16u) * 12, y, 10, 1, T_TEXT);
     }
-    if (song.playing && t->seq_idx < len && t->seq_idx / 16u == ui.bank)
-        cv_rect(40 + (int32_t)(t->seq_idx % 16u) * 12, y0 - 1, 10, 3, T_TEXT);
 }
 /* SCL: the 12 keys as rounded bars (black keys high, white keys low): in the scale THEME, the root the
  * accent, out of the scale RAISE */
@@ -437,17 +406,7 @@ static void graph_mod(const track_t *t, uint16_t c)
     }
 }
 
-static uint32_t steps_hash(const track_t *t)
-{
-    uint32_t h = 2166136261u, i;
-    for (i = 0; i < NSTEP; i++) {
-        const step_t *st = &seq_steps(t)[i];
-        h = (h ^ (st->note[0] + st->n * 128u + st->time * 1024u + st->flags * 4096u + st->note[1] * 65536u)) *
-            16777619u;
-        h = (h ^ (st->hit | (uint32_t)st->acc << 8 | (uint32_t)st->note[2] << 16 | (uint32_t)st->note[3] << 24)) * 16777619u;
-    }
-    return h;
-}
+static uint32_t steps_hash(const track_t *t) { return pat_sig_of(seq_pat(t)); }   /* (CESARI: the notes) */
 
 static uint32_t str_hash(uint32_t h, const char *s)
 {
@@ -918,7 +877,6 @@ static uint32_t graph_signature(void)
 #if FELUCCA_SLICE
     if (pg->graph == GR_SLICES && slice_page_ok()) h ^= slice_sig();
 #endif
-    if (pg->graph == GR_CHANCE) h ^= ui.cursor * 40503u + step_chance(&t->step[ui.cursor]);
     if (pg->scope == SC_ENGINE && (t->eng_req % NENGINES == ENGI_FM6 ||
                                    (FELUCCA_FM4 && t->eng_req % NENGINES == ENGI_DIGITAL)))
         h ^= (ui.hot_t ? ui.hot_col + 1u : 0u) * 65537u;
@@ -926,7 +884,7 @@ static uint32_t graph_signature(void)
         h ^= (fm6_pgen[(t - trk) % NTRK] + 1u) * 2246822519u;
     if (pg->scope == SC_ENGINE && ENGINES[t->eng_req % NENGINES] == &ENG_SAMPLE) h ^= sample_wave.pos * 13u + sample_wave.key;
     if (pg->graph == GR_STEPS || pg->graph == GR_ROLL || pg->graph == GR_CHANCE) {
-        uint32_t ph = song.playing ? t->seq_idx : 0xFFFFu;
+        uint32_t ph = song.playing ? t->seq_count : 0xFFFFu;
         if (pg->graph != GR_STEPS && ph / 16u != ui.bank)
             ph = 0xFFFFu;                            /* the roll shows the cursor's bank only */
         h ^= steps_hash(t) + ph * 31u + ui.cursor * 7919u + ui.lane * 104723u + ui.bank * 613u;
