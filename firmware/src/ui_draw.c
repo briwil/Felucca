@@ -802,14 +802,14 @@ static void draw_columns(void)
         draw_column(3, "AMT", val, unit, a ? VAL(3u) : T_DIM, RATIO(&TP[id + 2u], a), mod_src_icon(MS_OFF));
         return;
     }
-    if (cur_page()->scope == SC_STEP && drum_track(TSEL)) {   /* CESARI: the grid: HIT VEL CHANCE LEN */
+    if (cur_page()->scope == SC_STEP && drum_track(TSEL)) {   /* CESARI: the grid: - VEL CHANCE LEN */
         const step_t *st = &seq_steps(TSEL)[ui.cursor];
-        uint32_t b = 1u << ui.lane, on = step_on(st) && st->time == ST_NOTE, hit = (step_lanes(st) & b) != 0u;
+        uint32_t on = step_on(st) && st->time == ST_NOTE;
         char sv[8], sc[8], sl[8];
         fmt_int(sv, on ? (int32_t)(st->vel ? st->vel : 96u) : 0);
         fmt_int(sc, (int32_t)step_chance(st));
         fmt_int(sl, TSEL->p[P_SLEN]);
-        draw_column(0, "HIT", hit ? "ON" : "--", "", hit ? VAL(0u) : T_DIM, -1, ICON_AUTO);
+        draw_column(0, "", "", "", T_THEME, -1, ICON_NONE);   /* (the white keys are the hits) */
         draw_column(1, "VEL", on ? sv : "--", "", on ? VAL(1u) : T_DIM, on ? (int32_t)(st->vel ? st->vel : 96u) * 1000 / 127 : -1, ICON_AUTO);
         draw_column(2, "CHNC", sc, "%", VAL(2u), (int32_t)step_chance(st) * 10, ICON_PROB);
         draw_column(3, "LEN", sl, "", VAL(3u), -1, ICON_AUTO);

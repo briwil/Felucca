@@ -391,15 +391,14 @@ static void page_go(int32_t d)
     cursor_set((int32_t)(b * 16u + ui.cursor % 16u < len ? b * 16u + ui.cursor % 16u : len - 1u));
 }
 
-/* CESARI: the grid's knobs: 1 the HIT of the lane at the cursor (right on, left off), 2 VEL and 3 CHANCE of the
+/* CESARI: the grid's knobs: 1 nothing yet (the white keys turn hits on and off), 2 VEL and 3 CHANCE of the
  * step at the cursor (10 % a detent), 4 LEN of the pattern. The cursor is PRESETS (left / right) and ALGORITHM (the
  * lane, up / down); SELECT stays the tempo */
 static void grid_edit(uint32_t slot, int32_t steps)
 {
     step_t *st = &TSEL->step[ui.cursor % NSTEP];
     if (slot == 0u) {
-        if ((int32_t)ui.cursor < TSEL->p[P_SLEN])
-            grid_hit(TSEL, ui.cursor, ui.lane, steps > 0);
+        return;
     } else if (slot == 1u) {
         if (st->time != ST_NOTE || !step_on(st))
             return;                                       /* (an empty step has no velocity) */
