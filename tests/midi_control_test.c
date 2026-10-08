@@ -259,7 +259,7 @@ static int route_test(void)
     bad += check("CH1-4: a channel 5 sustain pedal does not hold channel 2's note", !gate_note(&trk[1], 62) && !midi_notes[1][62]);
     queued(0x91, 62, 100, 1); queued(0xB1, 1, 50, 1);
     queued(0xB4, 120, 0, 1); queued(0xB9, 123, 0, 2); queued(0xBF, 121, 0, 1);
-    bad += check("CH1-4: CC120 / CC123 / CC121 on channels 5..16 leave parts 1..4 sounding", gate_note(&trk[1], 62) && gate_note(&trk[3], 40) && midi_owners[1] == 1u && trk[1].mw == 50);
+    bad += check("CH1-4: CC120 / CC123 / CC121 on channels 5..16 leave parts 1..4 sounding", gate_note(&trk[1], 62) && midi_notes[3][40] == 4u && midi_owners[1] == 1u && trk[1].mw == 50);   /* (track 4: the 808, no voices) */
     queued(0xB1, 123, 0, 1); queued(0x83, 40, 0, 2);
     bad += check("CH1-4: panic on channel 2 still works", !gate_note(&trk[1], 62) && !midi_owners[1] && !midi_owners[3]);
 

@@ -18,6 +18,14 @@
 #include "eng_slice.c"
 #endif
 
+/* kit engines (kit.c): voice.c never plays their voices (kit_note takes their notes) */
+static void kit_voice_on(track_t *t, voice_t *v) { (void)t; v->active = 0; }
+static void kit_voice_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
+{
+    (void)t; (void)v; (void)out; (void)n; (void)m;
+}
+#include "eng_808.c"            /* 808: the X0X's TR-808 (x0x/drum808.c, 8W8), a kit engine (kit.c) */
+
 /* CESARI: an engine number that is gone (LOFI, TRIO, WHEEL, GRAIN, NOISE, the 909) or not built (SLICE). Never
  * offered (eng_ok); a stored sound of it loads as ANALOG (eng_load). It renders nothing */
 static void gone_note_on(struct track *t, voice_t *v) { (void)t; v->active = 0; }
@@ -60,7 +68,7 @@ static const engine_t *const ENGINES[NENGINES] = {
 #else
     &ENG_GONE,                   /* 13: reserved (no SLICE in this build) */
 #endif
-    &ENG_GONE,                   /* 14: the 909 (gone; the 808 comes here) */
+    &ENG_808,                    /* 14 (ENGI_808) */
     &ENG_GONE,                   /* 15: (the 606 comes here) */
 };
 
@@ -100,13 +108,15 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
     2,                           /* PHASE */
     5,                           /* VOICE */
     9,                           /* PHYS */
+    ENGI_808,                    /* 808 */
 };
 
 /* the engines one can pick (engine 1 only with FELUCCA_FM4), in ENGINE_ORDER: eng_ok(e), the n-th of them
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */
 /* CESARI: the engines it offers (ENGINE_ORDER); the others are gone (ENG_GONE) or hidden (SAMPLE, DRUM: their code
  * still serves the user sample slots and the drum grid) */
-#define ENG_OFFERED ((1u << 0) | (1u << 2) | (1u << 5) | (1u << 9) | (1u << ENGI_FM6) | ((uint32_t)FELUCCA_FM4 << ENGI_DIGITAL))
+#define ENG_OFFERED ((1u << 0) | (1u << 2) | (1u << 5) | (1u << 9) | (1u << ENGI_FM6) | (1u << ENGI_808) | \
+                     ((uint32_t)FELUCCA_FM4 << ENGI_DIGITAL))
 static int eng_ok(uint32_t e)
 {
     return e < NENGINES && ((ENG_OFFERED >> e) & 1u);
@@ -177,7 +187,7 @@ static const struct {
 #define NPATTERNS (sizeof PATTERNS / sizeof PATTERNS[0])
 
 /* the parts at power-on (engine, preset, PATTERNS[n - 1] in the sequencer, 0 = empty: all are): bass, pad, lead, drums */
-static const uint8_t TRK_DEF[NPART][3] = {{0, 4, 0}, {ENGI_FM6, 4, 0}, {2, 0, 0}, {ENGI_DRUM, 0, 0}}; /* ANALOG ACID,
+static const uint8_t TRK_DEF[NPART][3] = {{0, 4, 0}, {ENGI_FM6, 4, 0}, {2, 0, 0}, {ENGI_808, 0, 0}}; /* ANALOG ACID,
                                                                        * FM6 PAD (was DIGITAL PAD), LOFI PULSE LD, DRUM KIT */
 static uint32_t trk_def_engine(uint32_t i) { return TRK_DEF[i % NPART][0]; }
 

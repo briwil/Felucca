@@ -119,10 +119,10 @@ static void kit_played(track_t *t, uint32_t note)
 #define KIT_MAXF 10.0f                                  /* (a float far out of range: clipped, no int overflow) */
 static float kit_fdry[CTL], kit_frev[CTL], kit_fdly[CTL];
 static int32_t kit_rev[CTL], kit_dly[CTL];
-static inline int32_t kit_int(float x)
+static inline int32_t kit_int(float x, float fs)
 {
     x = x > KIT_MAXF ? KIT_MAXF : x < -KIT_MAXF ? -KIT_MAXF : x;
-    return (int32_t)(x * KIT_FS);
+    return (int32_t)(x * fs);
 }
 static int kit_render(track_t *t, int32_t *out, uint32_t n)
 {
@@ -139,10 +139,13 @@ static int kit_render(track_t *t, int32_t *out, uint32_t n)
     on = k->render((uint32_t)(t - trk) % NPART, kit_fdry, kit_frev, kit_fdly, n);
     if (!on)
         return 0;
-    for (i = 0; i < n; i++) {
-        out[i] = kit_int(kit_fdry[i]);
-        kit_rev[i] = kit_int(kit_frev[i]);
-        kit_dly[i] = kit_int(kit_fdly[i]);
+    {
+        const float fs = KIT_FS * (k->gain > 0.0f ? k->gain : 1.0f);
+        for (i = 0; i < n; i++) {
+            out[i] = kit_int(kit_fdry[i], fs);
+            kit_rev[i] = kit_int(kit_frev[i], fs);
+            kit_dly[i] = kit_int(kit_fdly[i], fs);
+        }
     }
     return 1;
 }

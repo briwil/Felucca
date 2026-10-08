@@ -314,7 +314,7 @@ static int test_sound_loads(void)
     for (i = 0; i < NTRK; i++)
         empty &= (uint32_t)seq_is_empty(&trk[i]);
     bad += check("power-on: the four sounds, every sequencer empty, no undo copy", empty && undo.trk == 0 && undo_depth == 0 &&
-                 trk[3].eng_req == ENGI_DRUM && trk[3].preset == 0u && trk[0].preset == TRK_DEF[0][1]);
+                 trk[3].eng_req == ENGI_808 && trk[3].preset == 0u && trk[0].preset == TRK_DEF[0][1]);   /* (Cesari: the 808) */
     my_steps(t);
     t->p[P_E0 + 1] = 77;                          /* a sound edit */
     t->p[P_AMODE] = 2;                            /* and the track's own settings */
@@ -4100,7 +4100,7 @@ static int test_fm4_retired(void)
                  seen == all && TSEL->eng_req == 0u && eng_step(0, 1) == ENGI_FM6 && eng_step(ENGI_FM6, 1) == 2u &&
                  eng_step(ENGI_FM6, -1) == 0u && eng_step(0, -1) == eng_vis(NENG_SHOWN - 1u));
     {   /* the display order (engines.c ENGINE_ORDER): every engine one can pick once; the PRESETS list follows it */
-        static const char *const ORDER[] = {"ANALOG", "FM6", "PHASE", "VOICE", "PHYS"};   /* (Cesari) */
+        static const char *const ORDER[] = {"ANALOG", "FM6", "PHASE", "VOICE", "PHYS", "808"};   /* (Cesari) */
         uint32_t last = 0xFFu, r = 0, n = 0;
         ok = NENG_SHOWN == NELEM(ORDER);
         for (i = 0; ok && i < NENG_SHOWN; i++)
@@ -4115,7 +4115,7 @@ static int test_fm4_retired(void)
             last = e;
             r++;
         }
-        bad += check("engines shown ANALOG FM6 PHASE VOICE PHYS (ENGINE_ORDER); PRESETS lists them so",
+        bad += check("engines shown ANALOG FM6 PHASE VOICE PHYS 808 (ENGINE_ORDER); PRESETS lists them so",
                      ok && r == NENG_SHOWN);
     }
     /* a user preset stored with engine 1: kept as it is, it loads as FM6 with the converted patch */
@@ -5948,6 +5948,93 @@ static int test_head_centres(void)
     return bad;
 }
 
+/* the 808 (eng_808.c, kit.c): EDIT opens the DRUM pages on the drum last played, a knob edits that drum alone,
+ * the audio code takes the change, the kit sounds without voices, a project and a user preset keep every drum's
+ * values, and leaving it zeroes PHYS's memory */
+static uint64_t kit_energy(track_t *t, uint32_t note, uint32_t blocks)
+{
+    int32_t o[2u * CTL];
+    uint64_t e = 0;
+    uint32_t b, i;
+    if (note)
+        trk_note_on(t, note, 100);
+    for (b = 0; b < blocks; b++) {
+        memset(o, 0, sizeof o);
+        mix_block(o, CTL);
+        for (i = 0; i < 2u * CTL; i++)
+            e += (uint64_t)(o[i] < 0 ? -o[i] : o[i]);
+    }
+    return e;
+}
+static int test_kit808(void)
+{
+    int bad = 0, ok;
+    char ti[20];
+    uint32_t b, k, voices = 0, part;
+    int32_t o[2u * CTL];
+    uint64_t e0, e1;
+    ui_power_on();
+    song.master_q12 = 4096;
+    bad += check("808: track 4 powers on as the 808 (TRK_DEF)", trk[3].eng_req == ENGI_808);
+    set_engine_of(TSEL, ENGI_808); go_home(); frame();
+    part = song.sel;
+    for (b = 0; b < 64u && TSEL->engine != ENGI_808; b++)
+        mix_block(o, CTL);
+    press(B_EDIT);
+    page_title(ti);
+    ok = cur_page()->scope == SC_KIT && str_eq(ti, "KICK 1/2") && kit_pot[part][D8S_BD][2] == 87;
+    bad += check("808: EDIT opens the DRUM pages on the kick (KICK 1/2), every drum at its 8W8 defaults", ok);
+    k = 7u + D8S_LC;                                      /* the key of the low conga (eng_808.c k808_keys) */
+    key_down(k); frame(); key_up(k); frame();
+    page_title(ti);
+    ok = kit_sel[part] == D8S_LC && str_eq(ti, "LOCNG 1/2");
+    bad += check("808: a drum played on the keys is the one the DRUM pages edit (LOCNG 1/2)", ok);
+    turn(EN_K2, 5);                                       /* (TUNE) */
+    ok = kit_pot[part][D8S_LC][1] == 69 && kit_pot[part][D8S_LT][1] == 64 && kit_pot[part][D8S_MC][1] == 64;
+    mix_block(o, CTL);
+    ok &= k808(part)->pot[D8S_LC][D8P_TUNE] == 69 && k808(part)->pot[D8S_LT][D8P_TUNE] == 64;
+    bad += check("808: KNOB 2 tunes the low conga alone (not its tom); the audio code takes it at its next block", ok);
+    e0 = kit_energy(TSEL, 36, 64);
+    for (k = 0; k < NVOICE; k++)
+        voices += TSEL->v[k].active;
+    bad += check("808: a kick sounds, with no voice taken from the budget", e0 > 1000000u && !voices);
+    e1 = kit_energy(TSEL, 0, 3000);
+    e1 = kit_energy(TSEL, 64, 64);
+    bad += check("808: the low conga sounds (GM 64)", e1 > 100000u);
+    kit_pot[part][D8S_BD][0] = 0;                         /* the kick's LEVEL to 0: silent */
+    e1 = kit_energy(TSEL, 0, 3000);                       /* (what still rings, the reverb: let it die) */
+    e1 = kit_energy(TSEL, 36, 64);
+    bad += check("808: the kick's LEVEL at 0 silences the kick", e1 * 100u < e0);
+    song.playing = 0;
+    kit_pot[part][D8S_SD][2] = 99; kit_pot[part][D8S_CY][1] = 7;
+    project_save(2);
+    kit_pot[part][D8S_SD][2] = 1; kit_pot[part][D8S_CY][1] = 1;
+    project_load(2); frame();
+    ok = TSEL->eng_req == ENGI_808 && kit_pot[part][D8S_SD][2] == 99 && kit_pot[part][D8S_CY][1] == 7 &&
+         kit_pot[part][D8S_BD][0] == 0 && kit_pot[part][D8S_LC][1] == 69;
+    bad += check("808: a project keeps every drum's values", ok);
+    kit_pot[part][D8S_SD][2] = 55;
+    up_store(5, "MY 808");
+    kit_pot[part][D8S_SD][2] = 2;
+    up_load(5); frame();
+    ok = TSEL->eng_req == ENGI_808 && kit_pot[part][D8S_SD][2] == 55 && kit_pot[part][D8S_CY][1] == 7;
+    bad += check("808: a user preset keeps every drum's values", ok);
+    set_engine_of(TSEL, ENGI_PHYS); frame();
+    for (b = 0; b < 64u && TSEL->engine != ENGI_PHYS; b++)
+        mix_block(o, CTL);
+    {
+        const uint8_t *m = (const uint8_t *)phys_slot[part];
+        uint32_t i, nz = 0;
+        for (i = 0; i < sizeof phys_slot[0]; i++)
+            nz |= m[i];
+        ok = !nz && !kit_live[part];
+    }
+    bad += check("808 -> PHYS: the part's memory is zeroed for PHYS (as at power-on)", ok);
+    e1 = kit_energy(TSEL, 60, 64);
+    bad += check("808 -> PHYS: PHYS plays", e1 > 100000u);
+    return bad;
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -6008,6 +6095,7 @@ int main(void)
     bad += test_breath();
     bad += test_step_leds();
     bad += test_fm6_charts();
+    bad += test_kit808();
 #if FELUCCA_FM4
     bad += test_fm_charts();                        /* (DIGITAL's charts: built with FELUCCA_FM4=1 only) */
 #else

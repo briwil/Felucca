@@ -1231,7 +1231,7 @@ async function capturePatch(rq, info, name) {
   const dump = parse[CMD.DUMP](await rq(req.dump()), info);
   const steps = [];
   for (let i = 0; i < UP.PAT && i < info.nstep; i++) steps.push(parse[CMD.STEP_GET](await rq(req.stepGet(i))));
-  const drum = info.engines[dump.engine] === "DRUM";   /* (a DRUM track that strikes a lane: its grid) */
+  const drum = KITS.includes(info.engines[dump.engine]);   /* (a DRUM or kit track that strikes a lane: its grid) */
   let fm6 = null;                                      /* an FM6 track: its own patch (the selected track's) */
   if (info.fm6 && info.engines[dump.engine] === "FM6") {
     const sel = info.ntrk ? parse[CMD.TRACK](await rq(req.track())).sel : 0;
@@ -1685,7 +1685,7 @@ function makeMockDevice(opt = {}) {
     E("MIDI", ["USB", "TRS"], 0), E("SYNC", NDASH, 0), E("ROUT", ["CH1-4", "SEL"], 0), D("CPU", F.INT, 0, 0, 0),
     D("SLOT", F.INT, 1, 4, 1), E("NAME", NDASH, 0), E("LOAD", NGO, 0), E("SAVE", NGO, 0),
     E("ENG", ["ANALOG", "-", "PHASE", "-", "SAMPLE", "VOICE", "-", "-",
-      "-", "PHYS", "DRUM", "-", "FM6", "-", "-", "-"], 0), E("SET", NGO, 0),
+      "-", "PHYS", "DRUM", "-", "FM6", "-", "808", "-"], 0), E("SET", NGO, 0),
     E("CLRSQ", NGO, 0), E("INIT", NGO, 0),
     E("TYPE", ["ROOM", "SPRING"], 0),               /* G_RTYPE (id 24, was G_DRCH): the reverb's model */
     D("-", F.INT, 0, 0, 0), D("-", F.INT, 0, 0, 0),   /* G_DRLVL, G_DRREV: inert since 1.0 */
@@ -1744,7 +1744,10 @@ function makeMockDevice(opt = {}) {
         P("PAD", [0, 0, 0, 0, 0, 0, 30, 4], [0, 0, 127, 0], 0, 5), P("MARIMBA", [0, 0, 0, 0, 0, 0, 0, 5], [0, 0, 127, 0], 0, 3),
         P("ORGAN", [0, 0, 0, 0, 0, 0, 0, 6], [0, 0, 127, 0], 0, 6), P("PLUCK", [0, 0, 0, 0, 0, 0, 0, 7], [0, 0, 127, 0], 0, 13)] },
     { name: "-", titles: ["-", "-"], edit: [NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE], presets: [] },   /* Cesari: gone */
-    { name: "-", titles: ["-", "-"], edit: [NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE], presets: [] },   /* Cesari: the 808 comes here */
+    /* 808 (eng_808.c): a kit engine; its drums' own parameters are edited on the device (DRUM pages) */
+    { name: "808", titles: ["KIT", "-"], edit: [D("LEVEL", F.PCT, 0, 127, 100), D("ACC", F.PCT, 0, 127, 127), E("CHOKE", ["OFF", "CH>OH", "BOTH"], 1),
+        NONE, NONE, NONE, NONE, NONE],
+      presets: [P("808 KIT", [100, 127, 1, 0, 0, 0, 0, 0], [0, 100, 127, 100], 0, 12)] },
     { name: "-", titles: ["-", "-"], edit: [NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE], presets: [] },   /* Cesari: the 606 comes here */
   ];
   const FM6_E = ENG.findIndex((e) => e.name === "FM6"), FM6_OWN = FM6.FACTORY_PK.length, DRUM_E = ENG.findIndex((e) => e.name === "DRUM");
@@ -1797,7 +1800,7 @@ function makeMockDevice(opt = {}) {
   const desc = (scope, id) => (scope === 0 && id < P_COUNT ? (id >= P_E0 ? ENG[st.engine].edit[id - P_E0] : TP[id])
     : scope === 1 && id < G_COUNT ? GP[id] : null);
   const EMPTY = { n: 0, notes: [0, 0, 0, 0], time: 2, flags: 0, vel: 0, hit: 0, acc: 0, chance: 100, ratchet: 1 };
-  const isDrum = () => ENG[st.engine].name === "DRUM";
+  const isDrum = () => KITS.includes(ENG[st.engine].name);   /* (DRUM, or a kit engine: the grid) */
   const clearSteps = () => st.step.forEach((s) => Object.assign(s, EMPTY, { notes: [0, 0, 0, 0] }));
   function toGrid(s) {                            /* eng_drum.c step_to_grid: a lane's own note becomes its hit */
     if (s.time !== 0) return;
@@ -1886,7 +1889,7 @@ function makeMockDevice(opt = {}) {
     clearSteps(); st.p[29] = 16;
   });
   /* the power-on sounds (engines.c TRK_DEF): ACID, PAD, PULSE LD, DRUM KIT */
-  [[1, FM6_E, 4], [2, 2, 0], [3, 10, 0], [0, 0, 4]].forEach(([i, e, p]) => { st.sel = i; setEngine(e); applyPreset(p); });
+  [[1, FM6_E, 4], [2, 2, 0], [3, 14, 0], [0, 0, 4]].forEach(([i, e, p]) => { st.sel = i; setEngine(e); applyPreset(p); });
   /* the device powers on with its sequencers empty; the mock starts as a little demo to look at: track 1 with
      the ACID pattern, track 4 with BEAT (as SEQ > PATTERNS would load them), pads left, lead right */
   st.sel = 3; loadPattern(11);
@@ -2390,7 +2393,8 @@ function enumShown(d) {
 /* the order the device shows its engines in (src/engines.c ENGINE_ORDER): the lists here follow it, the protocol keeps
    the engine numbers. engineOrder(names): the indices of names in that order, "-" (a reserved number) left out; a name
    the list does not know (another firmware) follows in index order */
-const ENGINE_ORDER = ["ANALOG", "FM6", "DIGITAL", "PHASE", "VOICE", "PHYS"];   /* Cesari */
+const ENGINE_ORDER = ["ANALOG", "FM6", "DIGITAL", "PHASE", "VOICE", "PHYS", "808", "606"];   /* Cesari */
+const KITS = ["DRUM", "808", "606"];               /* the drum engines: their tracks are grids (Cesari) */
 function engineOrder(names) {
   const rank = (n) => { const k = ENGINE_ORDER.indexOf(n); return k < 0 ? ENGINE_ORDER.length : k; };
   return (names || []).map((n, i) => i).filter((i) => names[i] !== "-")

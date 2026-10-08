@@ -25,7 +25,7 @@
 #define ENGI_808 14u
 #define ENGI_606 15u
 #define ENGI_DIGITAL 1u          /* reserved without FELUCCA_FM4: never selectable (eng_ok), its sounds load as FM6 */
-#define NENG_SHOWN (5 + FELUCCA_FM4)   /* CESARI: the engines one can pick: PRESETS, the EDIT layer, the editor,
+#define NENG_SHOWN (6 + FELUCCA_FM4)   /* CESARI: the engines one can pick: PRESETS, the EDIT layer, the editor,
                                                 * in the display order of engines.c ENGINE_ORDER */
 #define UP_SLOTS 32u             /* user presets (upreset.c) */
 #define NELEM(a) (sizeof(a) / sizeof((a)[0]))
@@ -190,7 +190,7 @@ struct track;
 #define KIT_PARAMS 12u           /* parameters a drum may have */
 typedef struct {
     const char *name;            /* the drum's label in the knob strip ("BD"): 2..5 characters */
-    const char *full;            /* .. and as a title ("KICK") */
+    const char *full;            /* .. as the grid's LANE and the DRUM pages' title ("KICK"): <= 5 characters */
 } kit_lane_t;
 typedef struct {
     const char *label;           /* knob label, upper case, <= 5 characters */
@@ -199,6 +199,7 @@ typedef struct {
 } kit_param_t;
 typedef struct kit_if {
     uint8_t nlanes;
+    float gain;                  /* its full scale against Felucca's parts (kit.c KIT_FS), 1.0 = as is */
     const kit_lane_t *lanes;
     uint32_t (*nparams)(uint32_t lane);
     const kit_param_t *(*param)(uint32_t lane, uint32_t i);
