@@ -1685,7 +1685,7 @@ function makeMockDevice(opt = {}) {
     E("MIDI", ["USB", "TRS"], 0), E("SYNC", NDASH, 0), E("ROUT", ["CH1-4", "SEL"], 0), D("CPU", F.INT, 0, 0, 0),
     D("SLOT", F.INT, 1, 4, 1), E("NAME", NDASH, 0), E("LOAD", NGO, 0), E("SAVE", NGO, 0),
     E("ENG", ["ANALOG", "-", "PHASE", "-", "SAMPLE", "VOICE", "-", "-",
-      "-", "PHYS", "DRUM", "-", "FM6", "-", "808", "-"], 0), E("SET", NGO, 0),
+      "-", "PHYS", "DRUM", "-", "FM6", "-", "808", "606"], 0), E("SET", NGO, 0),
     E("CLRSQ", NGO, 0), E("INIT", NGO, 0),
     E("TYPE", ["ROOM", "SPRING"], 0),               /* G_RTYPE (id 24, was G_DRCH): the reverb's model */
     D("-", F.INT, 0, 0, 0), D("-", F.INT, 0, 0, 0),   /* G_DRLVL, G_DRREV: inert since 1.0 */
@@ -1748,7 +1748,10 @@ function makeMockDevice(opt = {}) {
     { name: "808", titles: ["KIT", "-"], edit: [D("LEVEL", F.PCT, 0, 127, 100), D("ACC", F.PCT, 0, 127, 127), E("CHOKE", ["OFF", "CH>OH", "BOTH"], 1),
         NONE, NONE, NONE, NONE, NONE],
       presets: [P("808 KIT", [100, 127, 1, 0, 0, 0, 0, 0], [0, 100, 127, 100], 0, 12)] },
-    { name: "-", titles: ["-", "-"], edit: [NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE], presets: [] },   /* Cesari: the 606 comes here */
+    /* 606 (eng_606.c): a kit engine, as the 808 */
+    { name: "606", titles: ["KIT", "-"], edit: [D("LEVEL", F.PCT, 0, 127, 100), D("ACC", F.PCT, 0, 127, 127), E("CHOKE", ["OFF", "CH>OH", "BOTH"], 1),
+        NONE, NONE, NONE, NONE, NONE],
+      presets: [P("606 KIT", [100, 127, 1, 0, 0, 0, 0, 0], [0, 100, 127, 100], 0, 12)] },
   ];
   const FM6_E = ENG.findIndex((e) => e.name === "FM6"), FM6_OWN = FM6.FACTORY_PK.length, DRUM_E = ENG.findIndex((e) => e.name === "DRUM");
   /* factory PATTERNS[] (engines.c; the device loads them from SEQ > PATTERNS, presets only suggest one): absolute

@@ -25,6 +25,7 @@ static void kit_voice_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, c
     (void)t; (void)v; (void)out; (void)n; (void)m;
 }
 #include "eng_808.c"            /* 808: the X0X's TR-808 (x0x/drum808.c, 8W8), a kit engine (kit.c) */
+#include "eng_606.c"            /* 606: 6W6's TR-606 (x0x/drum606.c, AudioKit's 606 voices), a kit engine */
 
 /* CESARI: an engine number that is gone (LOFI, TRIO, WHEEL, GRAIN, NOISE, the 909) or not built (SLICE). Never
  * offered (eng_ok); a stored sound of it loads as ANALOG (eng_load). It renders nothing */
@@ -69,7 +70,7 @@ static const engine_t *const ENGINES[NENGINES] = {
     &ENG_GONE,                   /* 13: reserved (no SLICE in this build) */
 #endif
     &ENG_808,                    /* 14 (ENGI_808) */
-    &ENG_GONE,                   /* 15: (the 606 comes here) */
+    &ENG_606,                    /* 15 (ENGI_606) */
 };
 
 /* a track's engine number as an index (the audio paths: a compare, cheaper than % NENGINES; a bad number: 0) */
@@ -109,13 +110,14 @@ static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
     5,                           /* VOICE */
     9,                           /* PHYS */
     ENGI_808,                    /* 808 */
+    ENGI_606,                    /* 606 */
 };
 
 /* the engines one can pick (engine 1 only with FELUCCA_FM4), in ENGINE_ORDER: eng_ok(e), the n-th of them
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */
 /* CESARI: the engines it offers (ENGINE_ORDER); the others are gone (ENG_GONE) or hidden (SAMPLE, DRUM: their code
  * still serves the user sample slots and the drum grid) */
-#define ENG_OFFERED ((1u << 0) | (1u << 2) | (1u << 5) | (1u << 9) | (1u << ENGI_FM6) | (1u << ENGI_808) | \
+#define ENG_OFFERED ((1u << 0) | (1u << 2) | (1u << 5) | (1u << 9) | (1u << ENGI_FM6) | (1u << ENGI_808) | (1u << ENGI_606) | \
                      ((uint32_t)FELUCCA_FM4 << ENGI_DIGITAL))
 static int eng_ok(uint32_t e)
 {

@@ -28,7 +28,7 @@ dv_cym_run 67
 dv_out 35
 dv_metal_mix 16
 slicer_track 632
-fm1_alnk0_irq 42949
+fm1_alnk0_irq 70000
 fm1_timer5_irq 33387
 mod_begin 158
 mod_voice 30

@@ -34,7 +34,7 @@ All by Hügelton Instruments (Leo Kuroshita), in this tree:
 | Felucca: firmware, tools, web pages, tests | GPL-3.0-only | `LICENSE` |
 | The PHASE engine's waveforms: a C port of the oscillator of CrispyZebra (<https://github.com/hugelton/CrispyZebra>) | GPL-3.0 | `firmware/src/eng_phase.c` |
 | The DRUM voices and kit | GPL-3.0-only | `firmware/src/drum_voice.c`, `firmware/src/eng_drum.c` |
-| The Hügelton Sample Pack: Felucca's drum sounds, made by `tools/gen_waves.py`, from which the SLICE engine's BREAK is built (not CC0) | GPL-3.0-only | `tools/gen_waves.py` |
+| The Hügelton Sample Pack: Felucca's drum sounds, made by `tools/gen_waves.py` (not CC0) | GPL-3.0-only | `tools/gen_waves.py` |
 | The controls picture | GPL-3.0-only | `docs/controls.jpg` |
 | The Fukiai icon font (<https://github.com/hugelton/Fukiai>): the firmware's icons (rasterised at build time by `tools/gen_aa_icons.py`) and the web editor's | MIT | `web/fukiai.ttf`, `LICENSES/MIT-Fukiai.txt`, `web/FUKIAI-LICENSE.txt` |
 
@@ -43,7 +43,10 @@ All by Hügelton Instruments (Leo Kuroshita), in this tree:
 | What | Licence | Where |
 | --- | --- | --- |
 | Inter Tight font by The Inter Project Authors: the UI text, rasterised into the firmware at build time (`tools/gen_aa_font.py`; the generated tables are not offered as a font, and the font declares no Reserved Font Name) | SIL OFL 1.1 | `assets/fonts/InterTight[wght].ttf`, `LICENSES/OFL-InterTight.txt` (also `assets/fonts/OFL.txt`) |
-| Instrument samples (Versilian Studios VSCO-2 Community Edition, VCSL): the SAMPLE sets, also the SLICE engine's PIANO (the PIANO set's middle C) | CC0 1.0 | `assets/samples-cc0/`, provenance in `ATTRIBUTION.txt` there |
+| The 808 (X0X by Charles Vestal and contributors, <https://github.com/charlesvestal/fm1-x0x>: its port of 8W8's TR-808 circuit models, pot tables, defaults and kit balance) | GPL-3.0 | `firmware/src/x0x/drum808.c`, `drum808.h`, `fastmath.h`, `x0x_param.h` |
+| The 808's rim shot: sc808 by Yoshinosuke Horiuchi (in X0X's drum808.c) | MIT | `firmware/src/x0x/drum808.c` |
+| The 606: 6W6 by Charles Vestal (<https://github.com/charlesvestal/schwung-6W6>): the engine (pots, kit balance, velocity, choke, drive stage), the forked metal and clap voices, the hardware-fitted hat and cymbal tables, ported from C++ to C for Cesari | GPL-3.0 | `firmware/src/x0x/drum606.c`, `drum606.h` |
+| The 606's voices: 606-Inspired-Synth-Drums by Matthew Fecher / AudioKit Pro (<https://github.com/analogcode/606-Inspired-Synth-Drums>), ported to C inside the 606 above; the clap's colour filters | MIT | `firmware/src/x0x/drum606.c`, `firmware/src/x0x/drum606_clap.h` |
 | DaisySP by Electrosmith, Corp and Emilie Gillet (<https://github.com/electro-smith/DaisySP>): the PHYS engine's modal and string models and the resonator, ported to fixed point | MIT | `firmware/src/phys_dsp.c`, `LICENSES/MIT-DaisySP.txt` |
 | Rings by Emilie Gillet (<https://github.com/pichenettes/eurorack>): the PHYS engine's sympathetic strings, ported to fixed point | MIT | `firmware/src/phys_symp.c`, `LICENSES/MIT-Rings.txt` |
 | msfa by Google Inc. and Pascal Gauthier, from Dexed (<https://github.com/asb2m10/dexed>): the FM6 engine's synthesis, ported to integer C (Dexed itself is GPL-3.0; only msfa is used; the FM6 factory patches are Felucca's own) | Apache-2.0 | `firmware/src/fm6_core.c`, `LICENSES/Apache-2.0-msfa.txt` |

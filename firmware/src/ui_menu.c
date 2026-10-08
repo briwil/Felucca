@@ -34,9 +34,24 @@ static void draw_about_qr(int32_t x, int32_t y)
 enum { MC_TEXT, MC_TITLE, MC_URL };
 typedef struct { const char *text; uint8_t kind; } menu_credit_t;
 static const menu_credit_t MENU_CREDITS[] = {
+    {"CESARI", MC_TITLE},                   /* (the fork; Felucca's own above, by its authors) */
+    {"briwil, with Claude / GPL-3.0", MC_TEXT},
+    {"https://github.com/briwil/Felucca", MC_URL},
+    {"", MC_TEXT},
+    {"808: X0X + 8W8", MC_TITLE},
+    {"Charles Vestal and contributors / GPL-3.0", MC_TEXT},
+    {"https://github.com/charlesvestal/fm1-x0x", MC_URL},
+    {"Rim shot: Yoshinosuke Horiuchi, sc808 / MIT", MC_TEXT},
+    {"", MC_TEXT},
+    {"606: 6W6", MC_TITLE},
+    {"Charles Vestal / GPL-3.0", MC_TEXT},
+    {"https://github.com/charlesvestal/schwung-6W6", MC_URL},
+    {"606-Inspired-Synth-Drums: Matthew Fecher, AudioKit Pro / MIT", MC_TEXT},
+    {"https://github.com/analogcode/606-Inspired-Synth-Drums", MC_URL},
+    {"", MC_TEXT},
     {"H\xFCgelton Instruments", MC_TITLE},  /* Felucca's own: above; these are ours too */
     {"Leo Kuroshita", MC_TEXT},
-    {"CrispyZebra (PHASE waveforms), the DRUM voices, the Sample Pack: GPL-3.0", MC_TEXT},
+    {"CrispyZebra (PHASE waveforms), the DRUM voices: GPL-3.0", MC_TEXT},
     {"Fukiai icon font: MIT", MC_TEXT},
     {"https://github.com/hugelton", MC_URL},
     {"", MC_TEXT},
@@ -62,11 +77,6 @@ static const menu_credit_t MENU_CREDITS[] = {
     {"The Inter Project Authors", MC_TEXT},
     {"SIL Open Font License 1.1", MC_TEXT},
     {"https://github.com/rsms/inter-tight", MC_URL},
-    {"", MC_TEXT},
-    {"VSCO-2 CE + VCSL", MC_TITLE},
-    {"Versilian Studios / CC0 1.0", MC_TEXT},
-    {"https://github.com/sgossner/VSCO-2-CE", MC_URL},
-    {"https://github.com/sgossner/VCSL", MC_URL},
     {"", MC_TEXT},
     {"VOICE", MC_TITLE},
     {"Dennis H. Klatt (1980)", MC_TEXT},
@@ -109,8 +119,8 @@ static int32_t menu_document(int32_t y, int draw)
 {
     uint32_t i;
     if (draw) {
-        cv_text(6, y + 2, &AF_L, "FELUCCA", T_THEME);
-        cv_text(6, y + 38, &AF_S, "Multi-engine synthesizer", T_TEXT);
+        cv_text(6, y + 2, &AF_L, "CESARI", T_THEME);
+        cv_text(6, y + 38, &AF_S, "A Felucca fork: 808 + 606", T_TEXT);
         cv_text(6, y + 58, &AF_M, FELUCCA_VERSION, T_THEME);
         cv_text_r(232, y + 61, &AF_S, __DATE__, T_MID, T_BG);
         cv_text(6, y + 82, &AF_S, "(C) 2026 Leo Kuroshita", T_TEXT);
@@ -132,11 +142,11 @@ static int32_t menu_document(int32_t y, int draw)
         else y = menu_text(text, y, c->kind == MC_TITLE ? T_THEME : c->kind == MC_URL ? T_MID : T_TEXT, draw);
     }
     y = menu_text("LICENSES + SOURCE", y + 12, T_THEME, draw);
-    y = menu_text("DRUM + own samples: GPL-3.0-only", y, T_TEXT, draw);
+    y = menu_text("DRUM, 808, 606: GPL-3.0", y, T_TEXT, draw);
     y = menu_text("Fonts and icons: their licences travel with the source and the release files.", y, T_TEXT, draw);
     y = menu_text("NO WARRANTY", y, T_TEXT, draw);
     y = menu_text("Full notices in source:", y + 8, T_TEXT, draw);
-    y = menu_text("github.com/hugelton/Felucca", y, T_MID, draw);
+    y = menu_text("github.com/briwil/Felucca", y, T_MID, draw);
     return y + 4;
 }
 static int32_t menu_scroll_max(void)

@@ -1,3 +1,22 @@
+# Cesari
+
+A fork of [Felucca](https://github.com/hugelton/Felucca) (Hügelton Instruments, GPL-3.0) for the M-VAVE FM-1,
+with drum machines on any track and, next, a new sequencer.
+
+- **Engines:** ANALOG, FM6, PHASE, VOICE, PHYS, and two drum kits: the **808** (from
+  [X0X](https://github.com/charlesvestal/fm1-x0x) / 8W8) and the **606** (from
+  [6W6](https://github.com/charlesvestal/schwung-6W6), with Matthew Fecher's
+  [606-Inspired-Synth-Drums](https://github.com/analogcode/606-Inspired-Synth-Drums) voices). Any of the four
+  tracks can load any engine.
+- **Every drum has its own parameters** (level, tune, decay, its extras, drive and distortion type, reverb and
+  delay sends) on the DRUM pages: EDIT on a kit track shows the drum last played, four knobs per page.
+- **Gone:** the 909, LOFI, TRIO, WHEEL, GRAIN, NOISE, SLICE and the built-in samples (room for what comes next).
+- **Install:** from this fork's GitHub Actions build (the `.fwsc` package), the same way as Felucca's.
+
+Everything below is Felucca's own README, kept for its manual.
+
+---
+
 # Felucca
 
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)

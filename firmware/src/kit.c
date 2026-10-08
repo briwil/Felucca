@@ -20,6 +20,8 @@ static uint8_t kit_pot_of[NTRK]; /* the engine index + 1 whose parameters kit_po
 
 #define KIT_MEM_SIZE sizeof(phys_slot[0])
 static void *kit_mem(uint32_t part) { return (void *)phys_slot[part % NPART]; }
+_Static_assert(sizeof(drum808_t) <= KIT_MEM_SIZE, "the 808 lives in a part's PHYS memory");
+_Static_assert(sizeof(drum606_t) <= KIT_MEM_SIZE, "the 606 lives in a part's PHYS memory");
 
 /* the kit of the engine the track asked for (the UI), and of the one it plays (the audio context) */
 static const kit_if_t *track_kit(const track_t *t) { return ENGINES[eng_idx(t->eng_req)]->kit; }
@@ -32,12 +34,12 @@ static void kit_defaults_of(track_t *t, uint32_t e)
     uint32_t ti = (uint32_t)(t - trk) % NTRK, l, i;
     if (!k)
         return;
+    if (kit_pot_of[ti] != (uint8_t)(eng_idx(e) + 1u) || kit_sel[ti] >= k->nlanes)
+        kit_sel[ti] = 0;                              /* (another kit: its pages open on its kick) */
     kit_pot_of[ti] = (uint8_t)(eng_idx(e) + 1u);
     for (l = 0; l < KIT_LANES; l++)
         for (i = 0; i < KIT_PARAMS; i++)
             kit_pot[ti][l][i] = l < k->nlanes && i < k->nparams(l) ? (int16_t)k->param(l, i)->def : 0;
-    if (kit_sel[ti] >= k->nlanes)
-        kit_sel[ti] = 0;
 }
 static void kit_defaults(track_t *t) { kit_defaults_of(t, t->eng_req); }
 

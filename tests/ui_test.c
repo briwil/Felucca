@@ -4100,7 +4100,7 @@ static int test_fm4_retired(void)
                  seen == all && TSEL->eng_req == 0u && eng_step(0, 1) == ENGI_FM6 && eng_step(ENGI_FM6, 1) == 2u &&
                  eng_step(ENGI_FM6, -1) == 0u && eng_step(0, -1) == eng_vis(NENG_SHOWN - 1u));
     {   /* the display order (engines.c ENGINE_ORDER): every engine one can pick once; the PRESETS list follows it */
-        static const char *const ORDER[] = {"ANALOG", "FM6", "PHASE", "VOICE", "PHYS", "808"};   /* (Cesari) */
+        static const char *const ORDER[] = {"ANALOG", "FM6", "PHASE", "VOICE", "PHYS", "808", "606"};   /* (Cesari) */
         uint32_t last = 0xFFu, r = 0, n = 0;
         ok = NENG_SHOWN == NELEM(ORDER);
         for (i = 0; ok && i < NENG_SHOWN; i++)
@@ -6035,6 +6035,71 @@ static int test_kit808(void)
     return bad;
 }
 
+static int test_kit606(void)
+{
+    int bad = 0, ok;
+    char ti[20];
+    uint32_t b, k, voices = 0, part, quiet = 0;
+    int32_t o[2u * CTL];
+    uint64_t e0, e1;
+    ui_power_on();
+    song.master_q12 = 4096;
+    set_engine_of(TSEL, ENGI_606); go_home(); frame();
+    part = song.sel;
+    for (b = 0; b < 64u && TSEL->engine != ENGI_606; b++)
+        mix_block(o, CTL);
+    press(B_EDIT);
+    page_title(ti);
+    ok = cur_page()->scope == SC_KIT && str_eq(ti, "KICK 1/2") && kit_pot[part][D6_BD][2] == 24 &&
+         kit_pot[part][D6_CP][3] == 64;
+    if (!ok) printf("  [%s] scope %d bd %d cp %d\n", ti, cur_page()->scope, kit_pot[part][D6_BD][2], kit_pot[part][D6_CP][3]);
+    bad += check("606: EDIT opens the DRUM pages on the kick (KICK 1/2), every drum at its 6W6 defaults", ok);
+    k = 7u + D6_CP;                                       /* the key of the clap (eng_606.c k606_keys) */
+    key_down(k); frame(); key_up(k); frame();
+    page_title(ti);
+    ok = kit_sel[part] == D6_CP && str_eq(ti, "CLAP 1/2");
+    bad += check("606: a drum played on the keys is the one the DRUM pages edit (CLAP 1/2)", ok);
+    turn(EN_K2, 5);                                       /* (TUNE) */
+    mix_block(o, CTL);
+    ok = kit_pot[part][D6_CP][1] == 69 && kit_pot[part][D6_SD][1] == 70 && k606(part)->pot[D6_CP][D6P_TUNE] == 69;
+    bad += check("606: KNOB 2 tunes the clap alone; the audio code takes it at its next block", ok);
+    for (k = 0; k < NVOICE; k++)
+        voices += TSEL->v[k].active;
+    for (k = 0; k < D6_NUM; k++) {
+        e1 = kit_energy(TSEL, 0, 3000);
+        e1 = kit_energy(TSEL, K606_NOTE[k], 64);
+        quiet += e1 < 100000u;
+    }
+    bad += check("606: all eight drums sound (their GM notes), with no voice taken from the budget", !quiet && !voices);
+    e1 = kit_energy(TSEL, 0, 3000);
+    e0 = kit_energy(TSEL, 36, 64);
+    kit_pot[part][D6_BD][0] = 0;                          /* the kick's LEVEL to 0: silent */
+    e1 = kit_energy(TSEL, 0, 3000);
+    e1 = kit_energy(TSEL, 36, 64);
+    bad += check("606: the kick's LEVEL at 0 silences the kick", e1 * 100u < e0);
+    kit_note(TSEL, 46, 100);                              /* an open hat, then the closed hat cuts it (CHOKE CH>OH) */
+    mix_block(o, CTL);
+    kit_note(TSEL, 42, 100);
+    for (b = 0; b < 4u; b++)
+        mix_block(o, CTL);
+    bad += check("606: the closed hat chokes the open hat", k606(part)->rt[D6_OH].choke == 0.0f);
+    song.playing = 0;
+    kit_pot[part][D6_SD][4] = 99; kit_pot[part][D6_CY][1] = 7;
+    project_save(2);
+    kit_pot[part][D6_SD][4] = 1; kit_pot[part][D6_CY][1] = 1;
+    project_load(2); frame();
+    ok = TSEL->eng_req == ENGI_606 && kit_pot[part][D6_SD][4] == 99 && kit_pot[part][D6_CY][1] == 7 &&
+         kit_pot[part][D6_BD][0] == 0 && kit_pot[part][D6_CP][1] == 69;
+    bad += check("606: a project keeps every drum's values", ok);
+    set_engine_of(TSEL, ENGI_808); frame();
+    for (b = 0; b < 64u && TSEL->engine != ENGI_808; b++)
+        mix_block(o, CTL);
+    e1 = kit_energy(TSEL, 0, 3000);
+    e1 = kit_energy(TSEL, 36, 64);
+    bad += check("606 -> 808: the 808 takes the part's memory and plays", e1 > 1000000u && kit_live[part] == ENGI_808 + 1u);
+    return bad;
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -6096,6 +6161,7 @@ int main(void)
     bad += test_step_leds();
     bad += test_fm6_charts();
     bad += test_kit808();
+    bad += test_kit606();
 #if FELUCCA_FM4
     bad += test_fm_charts();                        /* (DIGITAL's charts: built with FELUCCA_FM4=1 only) */
 #else

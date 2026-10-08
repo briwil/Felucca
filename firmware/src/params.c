@@ -35,7 +35,7 @@ static const char *const N_MDST[] = {"OFF", "PITCH", "CUT", "SHP", "AMP", "PAN",
 static const char *const N_ENGNAME[] = {"ANALOG", FELUCCA_FM4 ? "DIGITAL" : "-", "PHASE", "-", "SAMPLE", "VOICE", "-", "-", "-", "PHYS",
                                              "DRUM", "-", "FM6",
                                              FELUCCA_SLICE ? "SLICE" : "-",
-                                             "808", "-",         /* 14, 15: the 808 and 606 */
+                                             "808", "606",       /* 14, 15: the 808 and 606 */
 };
 
 #define PD(l, f, mn, mx, df) {l, f, mn, mx, df, 0, 0}
