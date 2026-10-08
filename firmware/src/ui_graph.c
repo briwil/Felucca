@@ -1380,45 +1380,45 @@ static void graph_song(void)
     }
 }
 /* CESARI: the DRUM page: every parameter of the drum in rows of four under the knobs' columns, the row the knobs
- * edit in a frame (EDIT: the next row). Each cell: its label, its value, a bar */
+ * edit in a frame (EDIT: the next row). Row 0 takes the cards' band (ui_draw.c draw_columns), rows 1..3 the panel.
+ * Each cell: its label, its value, a bar */
 #define KG_ROW 39
 #define KG_H 37
-static void graph_kit(track_t *t)
+static uint32_t kit_map_on(void) { return !ui.home && cur_page()->graph == GR_KIT && large_kind() == LK_OFF; }
+static void kit_map_row(track_t *t, uint32_t r, int32_t y)
 {
     const kit_if_t *k = track_kit(t);
-    uint32_t n, rows, sel, r, c;
-    if (!k)
+    uint32_t n = k ? k->nparams(kit_lane_sel(t)) : 0u, sel = kit_row_of(t), c;
+    if (r * 4u >= n)
         return;
-    n = k->nparams(kit_lane_sel(t));
-    rows = kit_rows(t);
-    sel = kit_row_of(t);
-    for (r = 0; r < rows && r < 3u; r++) {
-        int32_t y = 3 + (int32_t)r * KG_ROW;
-        if (r == sel)
-            cv_frame(5, y - 1, 230, KG_H + 2, T_ACCENT);
-        for (c = 0; c < 4u; c++) {
-            uint32_t i = r * 4u + c;
-            int32_t x = 8 + (int32_t)c * 57, w = 54, vx;
-            int16_t *vp;
-            const param_desc_t *d;
-            const char *unit;
-            char val[16];
-            if (i >= n || !(d = kit_page_desc(t, i, &vp)) || !vp)
-                continue;
-            param_format(d, *vp, val, &unit);
-            cv_text(x + 2, y + 4 - AF_S_CAP_Y, &AF_S, d->label, r == sel ? T_TEXT : T_MID);
-            vx = cv_text(x + 2, y + 16 - AF_M_CAP_Y, &AF_M, val, r == sel ? T_THEME : T_MID);
-            if (unit && unit[0] && vx + 2 < x + w)
-                cv_text(vx + 2, y + 18 - AF_S_CAP_Y, &AF_S, unit, T_MID);
-            cv_rect(x + 2, y + 32, w - 4, 2, T_DIM);
-            if (d->max > d->min)
-                cv_rect(x + 2, y + 32, (w - 4) * clamp(*vp - d->min, 0, d->max - d->min) / (d->max - d->min), 2,
-                        r == sel ? T_THEME : T_MID);
-        }
+    if (r == sel)
+        cv_frame(5, y - 1, 230, KG_H + 2, T_ACCENT);
+    for (c = 0; c < 4u; c++) {
+        uint32_t i = r * 4u + c;
+        int32_t x = 8 + (int32_t)c * 57, w = 54, vx;
+        int16_t *vp;
+        const param_desc_t *d;
+        const char *unit;
+        char val[16];
+        if (i >= n || !(d = kit_page_desc(t, i, &vp)) || !vp)
+            continue;
+        param_format(d, *vp, val, &unit);
+        cv_text(x + 2, y + 4 - AF_S_CAP_Y, &AF_S, d->label, r == sel ? T_TEXT : T_MID);
+        vx = cv_text(x + 2, y + 16 - AF_M_CAP_Y, &AF_M, val, r == sel ? T_THEME : T_MID);
+        if (unit && unit[0] && vx + 2 < x + w)
+            cv_text(vx + 2, y + 18 - AF_S_CAP_Y, &AF_S, unit, T_MID);
+        cv_rect(x + 2, y + 32, w - 4, 2, T_DIM);
+        if (d->max > d->min)
+            cv_rect(x + 2, y + 32, (w - 4) * clamp(*vp - d->min, 0, d->max - d->min) / (d->max - d->min), 2,
+                    r == sel ? T_THEME : T_MID);
     }
 }
-#undef KG_ROW
-#undef KG_H
+static void graph_kit(track_t *t)
+{
+    uint32_t r;
+    for (r = kit_map_on() ? 1u : 0u; r < 4u; r++)
+        kit_map_row(t, r, 3 + (int32_t)(r - (kit_map_on() ? 1u : 0u)) * KG_ROW);
+}
 
 static void draw_graph(void)
 {

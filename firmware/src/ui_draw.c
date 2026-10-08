@@ -658,6 +658,29 @@ static void draw_columns(void)
         }
         return;
     }
+    static uint32_t ksig;                               /* (CESARI: the DRUM page's band, 0 = cards there now) */
+    if (!kit_map_on())
+        ksig = 0;
+    else {                                              /* CESARI: the DRUM page: the map's first row, no cards */
+        const int16_t *kp = kit_pot[song.sel % NTRK][kit_lane_sel(TSEL)];
+        uint32_t h = 2166136261u + kit_row_of(TSEL) * 40503u + kit_lane_sel(TSEL) * 7919u + TSEL->eng_req * 131u +
+                     ux.gen * 104729u + song.sel * 1299709u, i;
+        for (i = 0; i < 4u; i++)
+            h = (h ^ (uint32_t)kp[i]) * 16777619u;
+        if (!ui.force && h == ksig)
+            return;
+        ksig = h | 1u;
+        for (i = 0; i < 4u; i++) {
+            ui.col[i][0] = 0;                           /* (the cards draw again when the page changes) */
+            ui.roll[i].from[0] = 0;                     /* (and no card's digits are rolling under the map) */
+        }
+        cv_begin(240, Y_SEP_END - Y_LABEL, T_BG);
+        cv_rrect(3, 0, 234, Y_SEP_END - Y_LABEL, 5, T_SURF, T_BG);
+        cv_bg = T_SURF;
+        kit_map_row(TSEL, 0, 3);
+        cv_blit(0, Y_LABEL);
+        return;
+    }
     if (cur_page()->graph == GR_SONG) {
         uint32_t row = ui.song_row < CHAIN_ROWS ? ui.song_row : CHAIN_ROWS - 1u;
         int used = row < chain_config.count;
