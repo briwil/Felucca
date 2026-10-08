@@ -1058,15 +1058,16 @@ static int test_grid(void)
     /* CESARI: PRESETS the cursor, ALGORITHM the lane, SELECT the hit; the knobs ACC VEL CHANCE LEN */
     turn(EN_PRESET, 2);
     turn(EN_ALGO, 1);
+    turn(EN_K1, 1);
+    ok = ui.cursor == 2u && ui.lane == 2u && t->step[2].hit == 1u << DV_CLAP && song.sel == 0u;
+    turn(EN_K1, -1);
+    ok &= !t->step[2].hit && t->step[2].time == ST_REST;
     turn(EN_SELECT, 1);
-    ok = ui.cursor == 2u && ui.lane == 2u && t->step[2].hit == 1u << DV_CLAP && song.g[G_BPM] == 120 && song.sel == 0u;
+    ok &= song.g[G_BPM] == 121 && !t->step[2].hit;
+    song.g[G_BPM] = 120;
     turn(EN_K1, 1);
-    ok &= t->step[2].acc == 1u << DV_CLAP;
-    turn(EN_SELECT, -1);
-    ok &= !t->step[2].hit && !t->step[2].acc && t->step[2].time == ST_REST;
-    turn(EN_K1, 1);
-    ok &= t->step[2].hit == 1u << DV_CLAP && t->step[2].acc == 1u << DV_CLAP;
-    bad += check("grid: PRESETS the cursor, ALGORITHM the lane, SELECT the hit on / off, KNOB 1 ACC (adds the hit)", ok);
+    ok &= t->step[2].hit == 1u << DV_CLAP;
+    bad += check("grid: PRESETS the cursor, ALGORITHM the lane, KNOB 1 the hit on / off; SELECT still the tempo", ok);
     turn(EN_K2, 5);
     turn(EN_K3, -2);
     turn(EN_K4, 4);
@@ -6094,16 +6095,18 @@ static int test_kit606(void)
     press(B_EDIT);
     ok = cur_page()->scope == SC_KIT && kit_row_of(TSEL) == 1u && page_desc(cur_page(), 0, &hv) && hv == &kit_pot[part][D6_CP][4];
     press(B_EDIT);
-    ok &= cur_page()->scope == SC_KIT ? 0 : 1;                /* (CLAP: 8 parameters, 2 rows; then EDIT 1) */
-    bad += check("606: EDIT on the DRUM page: the next row of four, past the last the next EDIT page", ok);
+    ok &= kit_row_of(TSEL) == 2u && page_desc(cur_page(), 0, &hv) && hv == &TSEL->p[P_E0];   /* (the KIT row) */
+    press(B_EDIT);
+    ok &= cur_page()->scope == SC_KIT && kit_row_of(TSEL) == 0u;   /* (CLAP: 2 rows + KIT; then the first again) */
+    bad += check("606: EDIT on the DRUM page: the next row of four, the kit's row last, then the first again", ok);
     go_page(GR_ROLL); frame();
     ui.lane = 1u;                                         /* the grid's SNARE lane */
     fm1_ms += 2000u;
     press(B_EDIT);
     page_title(ti);
     ok = cur_page()->scope == SC_KIT && str_eq(ti, "SNARE") && kit_row_of(TSEL) == 0u;
-    press(B_EDIT); press(B_EDIT);                         /* (SNARE: 9 parameters, 3 rows) */
-    ok &= kit_row_of(TSEL) == 2u;
+    press(B_EDIT); press(B_EDIT); press(B_EDIT);          /* (SNARE: 9 parameters, 3 rows, then KIT) */
+    ok &= kit_row_of(TSEL) == 3u;
     press(B_EDIT);
     ok &= grid_on() && kit_row_of(TSEL) == 0u;
     bad += check("606: EDIT on the grid opens the lane's drum (SNARE); EDIT through its rows, then back to the grid", ok);

@@ -169,7 +169,22 @@ static const param_desc_t *kit_page_desc(track_t *t, uint32_t i, int16_t **valp)
     uint32_t lane = kit_lane_sel(t);
     const kit_param_t *kp;
     *valp = 0;
-    if (!k || i >= k->nparams(lane) || i >= KIT_PARAMS)
+    if (!k)
+        return 0;
+    {   /* CESARI: after the drum's rows, the kit's own row: EDIT 1's first three (LEVEL as KIT, ACC, CHOKE) */
+        uint32_t n = k->nparams(lane), kr = (n + 3u) / 4u * 4u;
+        if (i >= kr && i < kr + 3u) {
+            const engine_t *e = ENGINES[eng_idx(t->eng_req)];
+            static param_desc_t kd[3];
+            uint32_t j = i - kr;
+            kd[j] = e->edit[j];
+            if (j == 0u)
+                kd[j].label = "KIT";
+            *valp = &t->p[P_E0 + j];
+            return &kd[j];
+        }
+    }
+    if (i >= k->nparams(lane) || i >= KIT_PARAMS)
         return 0;
     kp = k->param(lane, i);
     dp = &dd[i];                                      /* (one per column: the four are drawn together) */
@@ -198,7 +213,7 @@ static uint32_t kit_rows(const track_t *t)
 {
     const kit_if_t *k = track_kit(t);
     uint32_t n = k ? k->nparams(kit_lane_sel(t)) : 0u;
-    return n ? (n + 3u) / 4u : 1u;
+    return (n + 3u) / 4u + (k ? 1u : 0u);              /* (the drum's rows, then the kit's row) */
 }
 static uint32_t kit_row_of(const track_t *t)
 {

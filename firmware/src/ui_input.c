@@ -391,14 +391,15 @@ static void page_go(int32_t d)
     cursor_set((int32_t)(b * 16u + ui.cursor % 16u < len ? b * 16u + ui.cursor % 16u : len - 1u));
 }
 
-/* CESARI: the grid's knobs: 1 ACC of the lane at the cursor (right on, left off), 2 VEL and 3 CHANCE of the step
- * at the cursor (10 % a detent), 4 LEN of the pattern. The cursor is PRESETS (left / right) and ALGORITHM (the lane,
- * up / down); SELECT turns the hit on (right) or off (left) */
+/* CESARI: the grid's knobs: 1 the HIT of the lane at the cursor (right on, left off), 2 VEL and 3 CHANCE of the
+ * step at the cursor (10 % a detent), 4 LEN of the pattern. The cursor is PRESETS (left / right) and ALGORITHM (the
+ * lane, up / down); SELECT stays the tempo */
 static void grid_edit(uint32_t slot, int32_t steps)
 {
     step_t *st = &TSEL->step[ui.cursor % NSTEP];
     if (slot == 0u) {
-        grid_acc(TSEL, ui.cursor, ui.lane, steps > 0);
+        if ((int32_t)ui.cursor < TSEL->p[P_SLEN])
+            grid_hit(TSEL, ui.cursor, ui.lane, steps > 0);
     } else if (slot == 1u) {
         if (st->time != ST_NOTE || !step_on(st))
             return;                                       /* (an empty step has no velocity) */
@@ -412,14 +413,6 @@ static void grid_edit(uint32_t slot, int32_t steps)
         TSEL->p[P_SLEN] = (int16_t)clamp(TSEL->p[P_SLEN] + steps, 1, NSTEP);
         cursor_set(ui.cursor);
     }
-}
-
-/* CESARI: SELECT on the grid: the selected lane's hit at the cursor, right on, left off */
-static void grid_select(int32_t s)
-{
-    if (chain_busy()) { ui_message("STOP TO EDIT"); return; }
-    if ((int32_t)ui.cursor < TSEL->p[P_SLEN])
-        grid_hit(TSEL, ui.cursor, ui.lane, s > 0);
 }
 
 /* CESARI: ALGORITHM on the grid: the lane, down (right) or up (left) */
@@ -1179,9 +1172,7 @@ static void ui_input(void)
             track_select((uint32_t)clamp((int32_t)song.sel + (s > 0 ? 1 : -1), 0, NTRK - 1));
     }
     if ((s = glo ? sel : panel_enc(EN_SELECT)) != 0) {   /* SELECT knob = global tempo; */
-        if (!glo && grid_on()) {
-            grid_select(s);                             /* (CESARI: the grid's hit; GLO + SELECT is the tempo) */
-        } else if (glo || !(ui_prefs & PREF_BPM_LOCK)) {
+        if (glo || !(ui_prefs & PREF_BPM_LOCK)) {
             song.g[G_BPM] = (int16_t)clamp(song.g[G_BPM] + accel(EN_SELECT, s, 200), GP[G_BPM].min, GP[G_BPM].max);
             ui.bpm_t = 40;                              /* the header's BPM lights up; no message over the header */
         } else {                                        /* MENU > BPM LOCK ON (#58): only with GLO held (and on GLO >

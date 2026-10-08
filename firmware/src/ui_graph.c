@@ -1387,9 +1387,8 @@ static void graph_song(void)
 static uint32_t kit_map_on(void) { return !ui.home && cur_page()->graph == GR_KIT && large_kind() == LK_OFF; }
 static void kit_map_row(track_t *t, uint32_t r, int32_t y)
 {
-    const kit_if_t *k = track_kit(t);
-    uint32_t n = k ? k->nparams(kit_lane_sel(t)) : 0u, sel = kit_row_of(t), c;
-    if (r * 4u >= n)
+    uint32_t sel = kit_row_of(t), c;
+    if (r >= kit_rows(t))
         return;
     if (r == sel)
         cv_frame(5, y - 1, 230, KG_H + 2, T_ACCENT);
@@ -1400,7 +1399,7 @@ static void kit_map_row(track_t *t, uint32_t r, int32_t y)
         const param_desc_t *d;
         const char *unit;
         char val[16];
-        if (i >= n || !(d = kit_page_desc(t, i, &vp)) || !vp)
+        if (!(d = kit_page_desc(t, i, &vp)) || !vp)
             continue;
         param_format(d, *vp, val, &unit);
         cv_text(x + 2, y + 4 - AF_S_CAP_Y, &AF_S, d->label, r == sel ? T_TEXT : T_MID);

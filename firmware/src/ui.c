@@ -192,8 +192,8 @@ static int page_visible(uint32_t i)
 {
     if (PAGES[i].scope == SC_KIT)                      /* DRUM: a kit engine's drums (kit.c) */
         return kit_page_visible(TSEL, PAGES[i].id[0]);
-    if (track_kit(TSEL) && PAGES[i].fam == FAM_EDIT &&  /* a kit: no EDIT 2 (unused), no VOICE (no voices) */
-        (PAGES[i].id[0] == P_E4 || PAGES[i].id[0] == P_VOICE))
+    if (track_kit(TSEL) && PAGES[i].fam == FAM_EDIT &&  /* a kit: the DRUM page only (CESARI: EDIT 1's KIT ACC */
+        PAGES[i].scope != SC_KIT)                      /* CHOKE are its last row; no EDIT 2, no VOICE) */
         return 0;
 #if FELUCCA_SLICE
     if (PAGES[i].graph == GR_SLICES)
