@@ -61,7 +61,11 @@ jobs:
       - name: Build
         run: |
           export CESARI_VERSION="c-$(git rev-parse --short HEAD)"   # (shown on ABOUT: which build this is)
-          ./build.sh
+          mkdir -p build
+          if ! ./build.sh > build/build.log 2>&1; then
+            python3 -c 'import sys; L=open("build/build.log", errors="replace").read().splitlines(); bad=[x for x in L if any(k in x.lower() for k in ("error", "overflow", "undefined", "budget", "too big", "exceed"))]; print("::error title=Build errors::" + "%0A".join(x.replace("%", "%25")[:200] for x in bad[:60])); print("::error title=Build log tail::" + "%0A".join(x.replace("%", "%25")[:200] for x in L[-40:]))'
+            exit 1
+          fi
           echo "::notice title=Firmware size::app $(stat -c %s build/felucca.bin) of $((0x8DFBC)) bytes, package $(stat -c %s build/felucca.fwsc) bytes"
           ./build.sh 2>&1 | grep -iE "ram|bss|pool|free|bytes|warning" | head -20 | while read -r l; do echo "::notice title=Build::$l"; done || true
 
