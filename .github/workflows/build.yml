@@ -65,8 +65,11 @@ jobs:
           python3 - <<'PY'
           import re
           L = open("build/tests.log", errors="replace").read().splitlines()
-          bad = [l for l in L if re.search(r"FAIL|over budget|differ|changed|Error|error:|Assertion|Segmentation|abort", l)]
-          print("::error title=Failing lines::" + "%0A".join(x.replace("%", "%25")[:200] for x in bad[:40]))
+          bad = []
+          for i, l in enumerate(L):
+              if l.startswith("RUN FAILED") or re.search(r"\bFAIL\b|FAILED \(|Segmentation|Assertion", l):
+                  bad += L[max(0, i - 12):i + 1] + ["----"]
+          print("::error title=Failing lines::" + "%0A".join(x.replace("%", "%25")[:200] for x in bad[:80]))
           print("::error title=Log tail::" + "%0A".join(x.replace("%", "%25")[:200] for x in L[-40:]))
           PY
           exit 1
