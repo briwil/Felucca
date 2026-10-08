@@ -53,7 +53,7 @@ SDK_SHA256 = {
 }
 
 PRODUCT = "FM-1_900"                # package identity; release builds are FM-1_9XY
-VERSION = None                      # FELUCCA_VERSION for release builds (default: firmware/src/felucca.c)
+VERSION = os.environ.get("CESARI_VERSION") or None   # FELUCCA_VERSION (CESARI: CI sets the commit; default: felucca.c)
 
 
 def toolchain():
