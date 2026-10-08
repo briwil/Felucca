@@ -44,8 +44,12 @@ jobs:
       - name: Get AC79 SDK files (only the three the package needs)
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: |
-          git clone --depth 1 --filter=blob:none --sparse --branch "$SDK_TAG" \
-              https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git "$AC79_SDK"
+          for i in 1 2 3 4; do
+            rm -rf "$AC79_SDK"
+            git clone --depth 1 --filter=blob:none --sparse --branch "$SDK_TAG" \
+                https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git "$AC79_SDK" && break
+            echo "gitee clone failed, retrying"; sleep 20
+          done
           git -C "$AC79_SDK" sparse-checkout set cpu/wl82/tools
           ls -l "$AC79_SDK/cpu/wl82/tools/uboot.boot"
 
