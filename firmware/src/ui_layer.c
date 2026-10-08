@@ -551,9 +551,10 @@ static void lcell(int32_t x, int32_t y, int32_t h, const char *note, uint32_t ic
         GFX_HOOK_ALIGN(x, 0, x + lc_w, 0, AL_H | AL_PASS, "layer cell icon / name centred across");
         cv_text_in(x, t + 22 - AF_S_CAP_Y, lc_w, &AF_S, name, ink, fill);
     } else if (name && h > 24) {                           /* the same, 12 px, 2 px between (the icon at a side) */
-        int32_t t = y + HALF_UP(h - (12 + 2 + AF_S_CAP_H));
-        GFX_HOOK_ALIGN(0, y, 0, y + h, AL_V | AL_N(2), "layer cell icon + name centred up/down");
-        cv_icon_on(note ? x + lc_w - 17 : x + 5, t, 12, icon, ink, fill);
+        int32_t b[4], t = y + HALF_UP(h - (12 + 2 + AF_S_CAP_H));
+        icon_ink(12, icon, b);                             /* (CESARI: an icon whose ink starts on its cell's top row, */
+        GFX_HOOK_ALIGN(0, y, 0, y + h, AL_V | AL_N(2), "layer cell icon + name centred up/down");   /* VOICE's, */
+        cv_icon_on(note ? x + lc_w - 17 : x + 5, t + 1 - b[1], 12, icon, ink, fill);   /* sits a row down, as the rest) */
         GFX_HOOK_ALIGN(x, 0, x + lc_w, 0, AL_H | AL_PASS, "layer cell icon / name centred across");
         cv_text_in(x, t + 14 - AF_S_CAP_Y, lc_w, &AF_S, name, ink, fill);
     } else if (name) {                                     /* a key's row: the icon and the name on its middle */

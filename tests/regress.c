@@ -264,7 +264,7 @@ static void job_song(const job_t *j)
     song.g[G_BPM] = 120;
     host_preset(t1, 0, 4);
     host_preset(t2, TRK_DEF[1][0], TRK_DEF[1][1]);
-    host_preset(t3, 3, 0);
+    host_preset(t3, 2, 0);                          /* (CESARI: PHASE; LOFI is gone) */
     host_drums(td);
     for (i = 0; i < 16u; i++) {
         uint8_t n = ACID[i];

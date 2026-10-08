@@ -311,26 +311,26 @@ static void test_math(void)
     mod_end(t);
     check("every per-block value restored", t->p[P_DIST] == 64 && t->p[P_CHOR] == 64 && t->p[P_LRATE] == 100 && t->p[P_LD_PIT] == 0);
 
-    /* an engine parameter: its descriptor's range */
-    e_trio = eng_by_name("TRIO");
-    k_pw = edit_by_label(e_trio, "PW", 7);
+    /* an engine parameter: its descriptor's range (CESARI: VOICE's BUZZ 0..127 and SHIFT -12..12; TRIO is gone) */
+    e_trio = eng_by_name("VOICE");
+    k_pw = edit_by_label(e_trio, "BUZZ", 4);
     fresh(e_trio, 0);
     lfo_at(t, 32767);
     t->p[P_E0 + k_pw] = 100;
     slot(t, 0, MS_LFO, MD_E1 + (int32_t)k_pw, 40);
     mod_begin(t);
-    check("LFO -> TRIO PW: clamped to its range (0..127)", t->p[P_E0 + k_pw] == 127);
+    check("LFO -> VOICE BUZZ: clamped to its range (0..127)", t->p[P_E0 + k_pw] == 127);
     mod_end(t);
-    t->p[P_E0 + 1] = 0;                            /* INT2: -24..24 */
-    slot(t, 0, MS_MODW, MD_E1 + 1, -32);
+    t->p[P_E0 + 3] = 0;                            /* SHIFT: -12..12 */
+    slot(t, 0, MS_MODW, MD_E1 + 3, -32);
     t->mw = 127;
     mod_begin(t);
-    check("MODW -> E2 -32: half its range down (TRIO INT2 -24..24: -24)",
-          t->p[P_E0 + 1] == (((((127 * 258) * -32) >> 6) * (ENGINES[e_trio]->edit[1].max - ENGINES[e_trio]->edit[1].min)) >> 15) &&
-          t->p[P_E0 + 1] < -10);
+    check("MODW -> E4 -32: half its range down (VOICE SHIFT -12..12: -12)",
+          t->p[P_E0 + 3] == (((((127 * 258) * -32) >> 6) * (ENGINES[e_trio]->edit[3].max - ENGINES[e_trio]->edit[3].min)) >> 15) &&
+          t->p[P_E0 + 3] < -5);
     mod_end(t);
-    check("the engine parameters restored", t->p[P_E0 + k_pw] == 100 && t->p[P_E0 + 1] == 0);
-    check("DST names: E1..E8 by the engine's labels", str_eq(mod_dst_name(t, MD_E1 + (int32_t)k_pw), "PW") &&
+    check("the engine parameters restored", t->p[P_E0 + k_pw] == 100 && t->p[P_E0 + 3] == 0);
+    check("DST names: E1..E8 by the engine's labels", str_eq(mod_dst_name(t, MD_E1 + (int32_t)k_pw), "BUZZ") &&
                                                           str_eq(mod_dst_name(t, MD_CUT), "CUT"));
 
     /* per-voice sources on a per-block destination: the latest note-on */

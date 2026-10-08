@@ -392,6 +392,7 @@ static int test_sound_loads(void)
     project_load(1);
     bad += check("a project load drops the copy and takes none", undo.trk == 0 && undo_depth == 0);
     ui_power_on();
+#if 0   /* CESARI: SAMPLE has no built-in sets, DRUM and SAMPLE are hidden: Felucca's migrations of them are moot */
     bad += check("SAMPLE factory browsing has four melodic presets and no PERC",
                  ENGINES[4]->npresets == 4u && str_eq(ENGINES[4]->presets[0].name, "PIANO") &&
                  str_eq(ENGINES[4]->presets[3].name, "SAX"));
@@ -462,6 +463,7 @@ static int test_sound_loads(void)
     apply_preset_to(t, SMP_SET_PERC);             /* SAMPLE preset 4 (once PERC): the editor's PRESET, a favourite */
     bad += check("SAMPLE preset 4 (once PERC): DRUM's kit", t->eng_req == ENGI_DRUM && t->preset == 0u && perc_kit(t) &&
                  gm_hits_play(t));
+#endif
     ui_power_on();
     host_legacy_sample_perc(&trk[3]);
     my_steps(&trk[3]);
@@ -1230,11 +1232,11 @@ static int test_favorites(void)
                  !memcmp(TSEL, &before, sizeof before));
     bad += check("one favorite occupies one display row, without repeated copies",
                  preset_visible(pos, total, 0) == 0 && preset_visible(pos, total, 1) == total);
-    select_engine(ENGI_DRUM);
+    select_engine(ENGI_PHYS);
     before = *TSEL;
     turn(EN_K3, 1);
     bad += check("a DRUM sound can be a favorite on any track", preset_favorite() &&
-                 favorite_has(ENGI_DRUM, 0) && !memcmp(TSEL, &before, sizeof before));
+                 favorite_has(ENGI_PHYS, 0) && !memcmp(TSEL, &before, sizeof before));
     turn(EN_PRESET, 1);
     bad += check("filtered browsing crosses DRUM and synth sounds while retaining the track's pattern and ARP",
                  TSEL->eng_req == 0 && preset_favorite() && !memcmp(TSEL->step, before.step, sizeof before.step) &&
@@ -1244,7 +1246,7 @@ static int test_favorites(void)
     bad += check("unmarking the current sound leaves it loaded even when outside the filtered list",
                  !preset_favorite() && total == 1 && pos == total && TSEL->eng_req == 0);
     turn(EN_PRESET, -1);
-    bad += check("browsing from a nonfavorite selects the last favorite", TSEL->eng_req == ENGI_DRUM);
+    bad += check("browsing from a nonfavorite selects the last favorite", TSEL->eng_req == ENGI_PHYS);
     turn(EN_K3, -1);
     before = *TSEL;
     turn(EN_PRESET, 1);
@@ -1646,7 +1648,7 @@ static int test_mono_screens(void)
     int bad = 0, ok;
     uint32_t e, n = 0, nb = 0;
     ok = mono_screens(UI_GREY_INDEX, screen_gray, &n);
-    bad += check("GREY: every pixel of every page, HOME, menu, ABOUT, dialog and countdown is gray", ok && n > 200u);
+    bad += check("GREY: every pixel of every page, HOME, menu, ABOUT, dialog and countdown is gray", ok && n > 120u);
     ok = mono_screens(UI_BW_INDEX, screen_neutral, &nb);
     bad += check("MONO (black and white): every pixel of every page, HOME, menu, ABOUT, dialog and countdown is neutral",
                  ok && nb == n);
@@ -2358,6 +2360,7 @@ static int test_product_ux(void)
         ok &= changed;
     }
     bad += check("all palettes: active column is subtle, stable-size, no zoom over graph", ok);
+#if 0   /* CESARI: SAMPLE and GRAIN have no built-in sets (SAMPLE hidden, GRAIN gone) */
     ui_power_on(); set_engine_of(TSEL, 4); open_family(FAM_EDIT);
     memset(&sample_wave, 0, sizeof sample_wave); last_note = 60;
     voice_t voices[NVOICE]; memcpy(voices, TSEL->v, sizeof voices);
@@ -2376,6 +2379,8 @@ static int test_product_ux(void)
     }
     ok &= !memcmp(lo, sample_wave.lo, sizeof lo) && !memcmp(hi, sample_wave.hi, sizeof hi);
     bad += check("sample waveform is bounded, matches audio IMA decode and leaves voices intact", ok);
+#endif
+
     ui_power_on(); return bad;
 }
 
@@ -2963,6 +2968,7 @@ static int test_sample_alert(void)
     bad += check("missing sample: the power-on sounds have their samples (no alert)", !snd_missing(&trk[0], &i) &&
                  !snd_missing(&trk[1], &i) && !snd_missing(&trk[2], &i) && !snd_missing(&trk[3], &i) &&
                  !str_eq(ui.msg, nf));
+#if 0   /* CESARI: SAMPLE and GRAIN have no built-in sets (SAMPLE hidden, GRAIN gone) */
     set_engine_of(TSEL, ENGI_SAMPLE);
     TSEL->p[P_E0] = (int16_t)(SMP_NSETS + 1u);      /* SET USR2: empty */
     frame();
@@ -2990,6 +2996,8 @@ static int test_sample_alert(void)
     frame();
     bad += check("GRAIN on an empty USR2: said", msg_is(nf));
     frames(1500);
+#endif
+
 #if FELUCCA_SLICE
     set_engine_of(TSEL, 13u);                        /* SLICE, SRC USR3 */
     TSEL->p[P_E0] = 3;
@@ -3002,6 +3010,7 @@ static int test_sample_alert(void)
     bad += check("SLICE on an empty USR3: said; PIANO: not (it has its sample)", ok);
     frames(1500);
 #endif
+#if 0   /* CESARI: SAMPLE is hidden (a project loads it as ANALOG) */
     /* a project with an empty slot: said after LOADED */
     set_engine_of(TSEL, ENGI_SAMPLE);
     TSEL->p[P_E0] = (int16_t)(SMP_NSETS + 1u);
@@ -3016,6 +3025,7 @@ static int test_sample_alert(void)
         seen = msg_is(nf);
     }
     bad += check("a project load with an empty slot: LOADED, then NO SAMPLE", ok && seen);
+#endif
     bad += check("missing sample: the icon and NO SAMPLE fit the header",
                  nf[0] == MSG_NOFILE[0] && !text_fit(b, sizeof b, nf + 1, &AF_S, 236 - 106 - 16 - KH_GAP));
     ui_power_on();
@@ -3340,11 +3350,11 @@ static int test_quick_layers(void)
     key_down(white(1)); key_up(white(1)); frame();
     ok &= TSEL->eng_req == ENGI_FM6;                    /* (G3: FM6, second in ENGINE_ORDER) */
     key_down(white(NENG_SHOWN - 1u)); key_up(white(NENG_SHOWN - 1u)); frame();
-    ok &= TSEL->eng_req == ENGI_909;                    /* (the last key: the 909) */
+    ok &= TSEL->eng_req == eng_vis(NENG_SHOWN - 1u);    /* (the last key: the last engine shown) */
     ok &= !memcmp(TSEL->step, before.step, sizeof before.step) && TSEL->p[P_SLEN] == before.p[P_SLEN] &&
           TSEL->p[P_SLCR] == SL_STUT;
     btn_up(B_EDIT); frame();
-    bad += check("EDIT + white key n: the n-th engine shown (FM6 2nd, 909 last), while playing; steps, LEN, SLICER stay", ok);
+    bad += check("EDIT + white key n: the n-th engine shown (FM6 2nd, the last one last), while playing; steps, LEN, SLICER stay", ok);
     hold(B_SAVE);
     bad += check("  SAVE held: UNDO back to before the layer's loads, the steps untouched",
                  TSEL->eng_req == 0u && TSEL->preset == before.preset && !memcmp(TSEL->step, before.step, sizeof before.step));
@@ -3360,9 +3370,9 @@ static int test_quick_layers(void)
     bad += check("  every engine one can pick has its white key from F3 (NENG_SHOWN, not a fixed count; never DIGITAL)",
                  ok && a == NENG_SHOWN);
     set_engine_of(TSEL, 0);
-    lay_combo(B_EDIT, white(eng_rank(3))); key_up(white(eng_rank(3))); frame();
+    lay_combo(B_EDIT, white(eng_rank(2))); key_up(white(eng_rank(2))); frame();   /* (PHASE: Cesari has no LOFI) */
     turn(EN_K2, 1);
-    ok = TSEL->eng_req == 3u && TSEL->preset == 1u;
+    ok = TSEL->eng_req == 2u && TSEL->preset == 1u;
     turn(EN_K3, 1);
     ok &= preset_favorite();
     oct_back();
@@ -3373,6 +3383,7 @@ static int test_quick_layers(void)
     ok = TSEL->eng_req == eng_step(0, 1);
     btn_up(B_EDIT); frame();
     bad += check("  KNOB 1: the next engine", ok);
+#if 0   /* CESARI: SAMPLE and GRAIN have no built-in sets (SAMPLE hidden, GRAIN gone) */
     {                                                   /* #124: SAMPLE's alias (1 = PIANO) is not a stop on KNOB 2 */
         uint32_t tot, n, c0, c1, c2, seen = 0, alias = 0;
         set_engine_of(TSEL, ENGI_SAMPLE); go_home(); frame();
@@ -3403,6 +3414,8 @@ static int test_quick_layers(void)
         btn_up(B_EDIT); frame();
         bad += check("  #124 SAMPLE: KNOB 2 right PIANO, FLUTE, SAX (No. 1 2 3), both ways round the list, never the alias", ok);
     }
+#endif
+
     song.playing = 0;
     lay_combo(B_EDIT, white(LY_INIT));
     ok = ui.confirm == CF_INIT_SOUND;
@@ -4064,7 +4077,7 @@ static int test_fm6_charts(void)
 static int test_fm4_retired(void)
 {
     int bad = 0, ok = 1;
-    uint32_t i, k, e, total, seen = 0, all = ((1u << NENGINES) - 1u) & ~(1u << ENGI_DIGITAL);
+    uint32_t i, k, e, total, seen = 0, all = ENG_OFFERED & ~(1u << ENGI_DIGITAL);   /* (Cesari: the engines it offers) */
     int16_t p[P_COUNT];
     uint8_t v[FP_SIZE + 1u];
     ui_power_on();
@@ -4076,7 +4089,7 @@ static int test_fm4_retired(void)
         if (e < NENGINES)
             seen |= 1u << e;
     }
-    bad += check("PRESETS: the list holds every engine's presets but DIGITAL's", seen == all && NENG_SHOWN == NENGINES - 1u);
+    bad += check("PRESETS: the list holds every engine's presets but DIGITAL's", seen == all && NENG_SHOWN == (uint32_t)__builtin_popcount(all));
     go_page(GR_BROWSE);
     set_engine_of(TSEL, 0);
     for (i = 0, seen = 0; i < NENG_SHOWN; i++) {
@@ -4085,10 +4098,9 @@ static int test_fm4_retired(void)
     }
     bad += check("PRESETS KNOB 2: the engines in order, DIGITAL skipped, back to the first",
                  seen == all && TSEL->eng_req == 0u && eng_step(0, 1) == ENGI_FM6 && eng_step(ENGI_FM6, 1) == 2u &&
-                 eng_step(ENGI_FM6, -1) == 0u && eng_step(0, -1) == ENGI_909);
+                 eng_step(ENGI_FM6, -1) == 0u && eng_step(0, -1) == eng_vis(NENG_SHOWN - 1u));
     {   /* the display order (engines.c ENGINE_ORDER): every engine one can pick once; the PRESETS list follows it */
-        static const char *const ORDER[] = {"ANALOG", "FM6", "PHASE", "LOFI", "SAMPLE", "VOICE", "TRIO", "WHEEL", "GRAIN",
-                                            "PHYS", "NOISE", "SLICE", "DRUM", "909"};
+        static const char *const ORDER[] = {"ANALOG", "FM6", "PHASE", "VOICE", "PHYS"};   /* (Cesari) */
         uint32_t last = 0xFFu, r = 0, n = 0;
         ok = NENG_SHOWN == NELEM(ORDER);
         for (i = 0; ok && i < NENG_SHOWN; i++)
@@ -4103,7 +4115,7 @@ static int test_fm4_retired(void)
             last = e;
             r++;
         }
-        bad += check("engines shown ANALOG FM6 PHASE ... NOISE SLICE DRUM 909 (ENGINE_ORDER); PRESETS lists them so",
+        bad += check("engines shown ANALOG FM6 PHASE VOICE PHYS (ENGINE_ORDER); PRESETS lists them so",
                      ok && r == NENG_SHOWN);
     }
     /* a user preset stored with engine 1: kept as it is, it loads as FM6 with the converted patch */
@@ -5408,9 +5420,9 @@ static int test_browse_no_pattern(void)
             }
         }
     }
-    if (!ok || loads < 200u || pat_hints <= 10u) printf("  ok %d loads %u hints %u\n", ok, loads, pat_hints);
+    if (!ok || loads < 100u || pat_hints <= 10u) printf("  ok %d loads %u hints %u\n", ok, loads, pat_hints);
     bad += check("#51 every sound browsed (HOME, PRESETS; stopped, playing): no step, ARP off, nothing held, no start",
-                 ok && loads >= 200u && pat_hints > 10u);
+                 ok && loads >= 100u && pat_hints > 10u);   /* (Cesari: fewer sounds) */
     return bad;
 }
 
@@ -5936,88 +5948,6 @@ static int test_head_centres(void)
     return bad;
 }
 
-/* the 909 (eng_909.c, kit.c): EDIT opens the DRUM pages on the drum last played, a knob edits that drum alone,
- * the audio code takes the change, the kit sounds without voices, and leaving it zeroes PHYS's memory */
-static uint64_t kit_energy(track_t *t, uint32_t note, uint32_t blocks)
-{
-    int32_t o[2u * CTL];
-    uint64_t e = 0;
-    uint32_t b, i;
-    if (note)
-        trk_note_on(t, note, 100);
-    for (b = 0; b < blocks; b++) {
-        memset(o, 0, sizeof o);
-        mix_block(o, CTL);
-        for (i = 0; i < 2u * CTL; i++)
-            e += (uint64_t)(o[i] < 0 ? -o[i] : o[i]);
-    }
-    return e;
-}
-static int test_kit909(void)
-{
-    int bad = 0, ok;
-    char ti[20];
-    uint32_t b, k, voices = 0, part;
-    int32_t o[2u * CTL];
-    uint64_t e0, e1;
-    ui_power_on();
-    song.master_q12 = 4096;
-    set_engine_of(TSEL, ENGI_909); go_home(); frame();
-    part = song.sel;
-    for (b = 0; b < 64u && TSEL->engine != ENGI_909; b++)
-        mix_block(o, CTL);
-    press(B_EDIT);
-    page_title(ti);
-    ok = cur_page()->scope == SC_KIT && str_eq(ti, "KICK 1/2") && kit_pot[part][DR_BD][0] == 34;
-    bad += check("909: EDIT opens the DRUM pages on the kick (KICK 1/2), every drum at its defaults", ok);
-    k = 38u - 29u - 12u * (uint32_t)song.octave;          /* the key of the snare (eng_909.c k909_keys) */
-    key_down(k); frame(); key_up(k); frame();
-    page_title(ti);
-    ok = kit_sel[part] == DR_SD && str_eq(ti, "SNARE 1/2");
-    bad += check("909: a drum played on the keys is the one the DRUM pages edit (SNARE 1/2)", ok);
-    turn(EN_K1, 5);
-    ok = kit_pot[part][DR_SD][0] == 69 && kit_pot[part][DR_BD][0] == 34 && kit_pot[part][DR_LT][0] == 66;
-    mix_block(o, CTL);
-    ok &= drum909_get(k909(part), DR_SD, 0) == 69;
-    bad += check("909: KNOB 1 tunes the snare alone; the audio code takes it at its next block", ok);
-    e0 = kit_energy(TSEL, 36, 64);
-    for (k = 0; k < NVOICE; k++)
-        voices += TSEL->v[k].active;
-    bad += check("909: a kick sounds, with no voice taken from the budget", e0 > 1000000u && !voices);
-    kit_pot[part][DR_BD][3] = 0;                          /* the kick's LEVEL to 0: silent */
-    e1 = kit_energy(TSEL, 0, 3000);                       /* (what still rings, the reverb: let it die) */
-    e1 = kit_energy(TSEL, 36, 64);
-    bad += check("909: the kick's LEVEL at 0 silences the kick", e1 * 100u < e0);
-    song.playing = 0;                                     /* a project and a user preset keep every drum's values */
-    kit_pot[part][DR_SD][0] = 99; kit_pot[part][DR_CR][2] = 7;
-    project_save(2);
-    kit_pot[part][DR_SD][0] = 1; kit_pot[part][DR_CR][2] = 1;
-    project_load(2); frame();
-    ok = TSEL->eng_req == ENGI_909 && kit_pot[part][DR_SD][0] == 99 && kit_pot[part][DR_CR][2] == 7 &&
-         kit_pot[part][DR_BD][3] == 0;
-    bad += check("909: a project keeps every drum's values", ok);
-    kit_pot[part][DR_SD][0] = 55;
-    up_store(5, "MY 909");
-    kit_pot[part][DR_SD][0] = 2;
-    up_load(5); frame();
-    ok = TSEL->eng_req == ENGI_909 && kit_pot[part][DR_SD][0] == 55 && kit_pot[part][DR_CR][2] == 7;
-    bad += check("909: a user preset keeps every drum's values", ok);
-    set_engine_of(TSEL, ENGI_PHYS); frame();
-    for (b = 0; b < 64u && TSEL->engine != ENGI_PHYS; b++)
-        mix_block(o, CTL);
-    {
-        const uint8_t *m = (const uint8_t *)phys_slot[part];
-        uint32_t i, nz = 0;
-        for (i = 0; i < sizeof phys_slot[0]; i++)
-            nz |= m[i];
-        ok = !nz && !kit_live[part];
-    }
-    bad += check("909 -> PHYS: the part's memory is zeroed for PHYS (as at power-on)", ok);
-    e1 = kit_energy(TSEL, 60, 64);
-    bad += check("909 -> PHYS: PHYS plays", e1 > 100000u);
-    return bad;
-}
-
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -6078,7 +6008,6 @@ int main(void)
     bad += test_breath();
     bad += test_step_leds();
     bad += test_fm6_charts();
-    bad += test_kit909();
 #if FELUCCA_FM4
     bad += test_fm_charts();                        /* (DIGITAL's charts: built with FELUCCA_FM4=1 only) */
 #else

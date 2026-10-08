@@ -404,10 +404,10 @@ static int up_load(uint32_t k)
 #endif
     {
         fm1_irq_off();                                  /* the audio ISR must not see half a sound */
-        t->eng_req = r->engine;
+        t->eng_req = (uint8_t)eng_load(r->engine);      /* (CESARI: an engine it does not offer: ANALOG) */
         for (i = 0; i < P_COUNT; i++)
             if (!param_kept(i))
-                t->p[i] = v[i];
+                t->p[i] = (int16_t)param_fit(param_desc_of(t->eng_req, i), v[i]);
         t->preset = 0;
         fm1_irq_on();
         upf_track_load(t, k);                           /* FM6: the preset's own patch (up_fm6.c) */

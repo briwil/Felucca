@@ -450,7 +450,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
                                                            * DIGITAL's first preset, as FM6) */
                 ed_load_t b;
                 ed_load_before(&b);
-                set_engine((uint32_t)clamp(ed_rv(a + 2), 0, NENGINES - 1));
+                set_engine(eng_load((uint32_t)clamp(ed_rv(a + 2), 0, NENGINES - 1)));   /* (Cesari: offered ones) */
                 ed_load_after(&b);
             } else if (d->max > d->min) {
                 *vp = (int16_t)enum_orig(d, clamp(ed_rv(a + 2), d->min, d->max));
